@@ -18,6 +18,8 @@ export default defineNuxtConfig({
   },
 
   nitro: {
+    // Статику жмём на сборке; динамический HTML — плагином server/plugins/compression.ts.
+    compressPublicAssets: { gzip: true, brotli: true },
     // Отдаём файлы через собственный маршрут /cdn/**, а не как статику:
     // так у нас свои заголовки кеширования и возможность притормозить ответ.
     routeRules: {

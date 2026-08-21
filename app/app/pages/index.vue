@@ -11,7 +11,7 @@
 /** Задержка отдачи файлов, мс. Живёт в адресе — см. composables/useQueryParam.ts. */
 const delay = useQueryParam('delay', 0);
 
-const { data, refresh } = await useFetch('/api/images');
+const { data, refresh } = await useFetch('/api/images', { query: { ph: '20' } });
 
 useHead({ title: 'Каталог — демка загрузки изображений' });
 

@@ -45,7 +45,8 @@ export function buildCards(images: any[] | undefined, params: DemoParams) {
       title: src.title,
       width: src.width,
       height: src.height,
-      placeholder: src.placeholders?.[params.ph] ?? src.placeholder,
+      // Ширину выбрал сервер по параметру `ph` — лишних сюда не приходит.
+      placeholder: src.placeholder,
       price: 350 + i * 37,
       url: `${variant.url}?speed=${params.speed}`,
       bytes: variant.bytes,

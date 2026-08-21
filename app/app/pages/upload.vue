@@ -29,7 +29,7 @@ async function send(files: FileList | File[]) {
   for (const f of list) body.append('file', f);
 
   try {
-    result.value = await $fetch(`/api/images?sizes=${encodeURIComponent(sizes.value)}`, {
+    result.value = await $fetch(`/api/images?sizes=${encodeURIComponent(sizes.value)}&ph=all`, {
       method: 'POST',
       body,
     });

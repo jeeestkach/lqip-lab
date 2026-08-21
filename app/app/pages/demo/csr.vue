@@ -14,30 +14,54 @@
 
 definePageMeta({ layout: false });
 
+// Мета-теги у обеих стратегий одинаковые: разница НЕ в них, а в содержимом.
+useHead({
+  title: 'Каталог товаров — клиентский рендер',
+  meta: [{ name: 'description', content: 'Каталог товаров: список запрашивается браузером после загрузки скриптов.' }],
+});
+
 const params = useDemoParams();
 
 // `server: false` — запрос уходит ТОЛЬКО из браузера, после гидратации.
 // Это и есть клиентская стратегия: сервер о списке товаров ничего не знает.
-const { data, status } = await useFetch('/api/images', { server: false, lazy: true });
-const cards = computed(() => buildCards(data.value?.images, params));
+const { data: cards, status } = await useFetch('/api/images', {
+  query: { ph: params.ph },
+  server: false,
+  lazy: true,
+  transform: (d: any) => buildCards(d?.images, params),
+});
 
 const loader = useSequentialImages();
 
 function run() {
   loader.start(
-    cards.value.map((c) => ({ key: c.key, url: c.url })),
+    (cards.value ?? []).map((c) => ({ key: c.key, url: c.url })),
     params.concurrency,
   );
 }
 
 // Загрузку картинок начинаем не раньше, чем пришли сами данные —
 // иначе стратегия перестала бы быть честной.
-watch(cards, (list) => { if (list.length) run(); });
+watch(cards, (list) => { if (list?.length) run(); });
 
-const { post, offset } = useDemoFrame({
+const { post, offset, markFirstImagery, markCardsVisible } = useDemoFrame({
   strategy: 'csr',
-  onRun: () => { if (cards.value.length) run(); },
+  onRun: () => { if (cards.value?.length) run(); },
   onStop: loader.stop,
+});
+
+// Веха «товар виден» — на следующем кадре отрисовки после появления карточек.
+watch(
+  () => (cards.value ?? []).length,
+  // Обёртка обязательна: requestAnimationFrame передаёт колбэку метку времени,
+  // и она попала бы в первый параметр как `atFirstPaint = true`.
+  (n) => { if (n) nextTick(() => requestAnimationFrame(() => markCardsVisible())); },
+  { immediate: true },
+);
+
+// До первой настоящей фотографии на месте картинки пусто — отмечать нечего.
+watch(() => loader.done.value.size, (n) => {
+  if (n) nextTick(() => requestAnimationFrame(() => markFirstImagery()));
 });
 
 watch(
@@ -62,8 +86,8 @@ watch(
       на клиенте сразу 'pending', и разметка бы разошлась при гидратации.
       Пока карточек нет — состояние ровно одно, и описывать его надо одинаково.
     -->
-    <p v-if="!cards.length" class="demo-empty">Запрашиваю список товаров…</p>
-    <DemoGrid v-else :cards="cards" :loaded="loader.done.value" :with-placeholder="false" />
+    <p v-if="!cards?.length" class="demo-empty">Запрашиваю список товаров…</p>
+    <DemoGrid v-else :cards="cards ?? []" :loaded="loader.done.value" :with-placeholder="false" />
     </div>
   </div>
 </template>

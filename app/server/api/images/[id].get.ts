@@ -12,5 +12,5 @@ export default defineEventHandler(async (event) => {
   const record = await useRepo().findById(id);
   if (!record) throw createError({ statusCode: 404, statusMessage: 'изображение не найдено' });
 
-  return toPublic(record, useObjectStorage());
+  return toPublic(record, useObjectStorage(), String(getQuery(event).ph ?? ''));
 });

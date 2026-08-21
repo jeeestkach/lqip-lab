@@ -22,23 +22,39 @@ function parseSizes(raw: unknown): number[] {
   return parsed.length ? parsed : DEFAULT_SIZES;
 }
 
-/** Форма записи, которую видит клиент: ключи заменены на публичные URL. */
-export function toPublic(record: ImageRecord, storage: { url(key: string): string }) {
+/**
+ * Форма записи, которую видит клиент: ключи заменены на публичные URL.
+ *
+ * @param phWidth Если задана — отдаём ТОЛЬКО эту ширину плейсхолдера.
+ *   Все четыре нужны лишь странице загрузки, где их сравнивают. Обычному
+ *   потребителю лишние ширины — мёртвый груз: замер показал, что они занимали
+ *   23 КБ из 39 КБ payload гидратации, три четверти впустую.
+ */
+export function toPublic(
+  record: ImageRecord,
+  storage: { url(key: string): string },
+  phWidth?: string,
+) {
   const sorted = [...record.variants].sort((a, b) => a.width - b.width);
+  const chosen = phWidth && record.placeholders[phWidth] ? phWidth : String(DEFAULT_PLACEHOLDER_WIDTH);
   return {
     id: record.id,
     title: record.title,
     width: record.width,
     height: record.height,
-    // Готовые data URI с префиксом — клиенту не надо ничего доклеивать.
+    // Готовый data URI с префиксом — клиенту не надо ничего доклеивать.
     placeholder: toDataUri(
-      record.placeholders[String(DEFAULT_PLACEHOLDER_WIDTH)] ?? Object.values(record.placeholders)[0]!,
+      record.placeholders[chosen] ?? Object.values(record.placeholders)[0]!,
       record.placeholderFormat,
     ),
-    // Все посчитанные ширины: интерфейс переключает детальность без перезаливки.
-    placeholders: Object.fromEntries(
-      Object.entries(record.placeholders).map(([w, b64]) => [w, toDataUri(b64, record.placeholderFormat)]),
-    ),
+    // Все ширины — только по явному запросу: их сравнивают на странице загрузки.
+    ...(phWidth === 'all'
+      ? {
+          placeholders: Object.fromEntries(
+            Object.entries(record.placeholders).map(([w, b64]) => [w, toDataUri(b64, record.placeholderFormat)]),
+          ),
+        }
+      : {}),
     original: { url: storage.url(record.originalKey), bytes: record.originalBytes },
     variants: sorted.map((v) => ({
       width: v.width,

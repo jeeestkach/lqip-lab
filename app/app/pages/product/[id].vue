@@ -14,7 +14,7 @@ const delay = useQueryParam('delay', 0);
 
 const full = ref(false);
 
-const { data: img } = await useFetch(`/api/images/${route.params.id}`);
+const { data: img } = await useFetch(`/api/images/${route.params.id}`, { query: { ph: '20' } });
 if (!img.value) throw createError({ statusCode: 404, statusMessage: 'Изображение не найдено' });
 
 useHead({ title: `${img.value.title} — демка загрузки изображений` });

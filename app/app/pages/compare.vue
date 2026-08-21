@@ -43,6 +43,38 @@ const stats = reactive<Record<string, { done: number; total: number; elapsed: nu
 /** Высота содержимого каждого кадра — по ней считается ход прокрутки. */
 const heights = reactive<Record<string, number>>({ csr: 0, ssr: 0 });
 
+/** Начальный объём каждой стратегии: HTML, стили, скрипты, ответы API. */
+const payloads = reactive<Record<string, any>>({ csr: null, ssr: null });
+
+/** Вехи загрузки каждой стратегии. */
+const marks = reactive<Record<string, any>>({ csr: null, ssr: null });
+
+/** Что видит краулер без исполнения JS. Запрашивается по кнопке. */
+const seo = reactive<Record<string, any>>({ csr: null, ssr: null });
+const seoBusy = ref(false);
+
+async function runSeoAudit() {
+  seoBusy.value = true;
+  try {
+    const [csr, ssr] = await Promise.all([
+      $fetch('/api/seo-audit', { query: { path: `/demo/csr?${query.value}` } }),
+      $fetch('/api/seo-audit', { query: { path: `/demo/ssr?${query.value}` } }),
+    ]);
+    seo.csr = csr;
+    seo.ssr = ssr;
+  } finally {
+    seoBusy.value = false;
+  }
+}
+
+/** Насколько показатель отличается от эталона — клиентской стратегии. */
+function delta(base: number, value: number): string {
+  if (!base) return value ? '—' : '';
+  const d = ((value - base) / base) * 100;
+  const sign = d > 0 ? '+' : '';
+  return `${sign}${d.toFixed(0)} %`;
+}
+
 /** Видимая высота кадра. */
 const VIEW_H = 620;
 
@@ -91,6 +123,12 @@ function onMessage(e: MessageEvent) {
   if (d?.type === 'demo:height' && d.strategy in heights) {
     heights[d.strategy] = d.height;
   }
+  if (d?.type === 'demo:payload' && d.strategy in payloads) {
+    payloads[d.strategy] = d.payload;
+  }
+  if (d?.type === 'demo:milestones' && d.strategy in marks) {
+    marks[d.strategy] = d.milestones;
+  }
 }
 
 onMounted(() => {
@@ -110,8 +148,40 @@ function restart() {
   stats.ssr = { done: 0, total: 0, elapsed: 0, bytes: 0 };
   heights.csr = 0;
   heights.ssr = 0;
+  payloads.csr = null;
+  payloads.ssr = null;
+  marks.csr = null;
+  marks.ssr = null;
   window.scrollTo({ top: 0, behavior: 'instant' as ScrollBehavior });
   runId.value += 1;
+}
+
+/** Строки таблицы объёма. */
+const payloadRows = [
+  { key: 'document', label: 'HTML-документ', lowerIsBetter: true },
+  { key: 'css', label: 'стили', lowerIsBetter: true },
+  { key: 'js', label: 'скрипты', lowerIsBetter: true },
+  { key: 'json', label: 'ответы API', lowerIsBetter: true },
+  { key: 'total', label: 'всего до первой отрисовки', lowerIsBetter: true },
+];
+
+/** Строки таблицы «что видит краулер». */
+const seoRows = [
+  { key: 'title', label: 'заголовок страницы', moreIsBetter: false },
+  { key: 'cards', label: 'карточек товара в разметке', moreIsBetter: true },
+  { key: 'productNames', label: 'названий товаров', moreIsBetter: true },
+  { key: 'images', label: 'тегов img', moreIsBetter: true },
+  { key: 'imagesWithAlt', label: 'из них с alt', moreIsBetter: true },
+  { key: 'placeholders', label: 'плейсхолдеров в документе', moreIsBetter: true },
+  { key: 'textLength', label: 'символов видимого текста', moreIsBetter: true },
+  { key: 'bytes', label: 'вес документа, байт', moreIsBetter: false },
+];
+
+/** Подсвечивает разницу: зелёным то, что лучше эталона. */
+function deltaClass(base: number, value: number, lowerIsBetter: boolean) {
+  if (!base || base === value) return '';
+  const better = lowerIsBetter ? value < base : value > base;
+  return better ? 'good' : 'bad';
 }
 
 const fmt = (n: number) => (n < 1024 ? `${n} B` : n < 1048576 ? `${(n / 1024).toFixed(1)} КБ` : `${(n / 1048576).toFixed(2)} МБ`);
@@ -204,6 +274,153 @@ const fmtMs = (ms: number) => (ms >= 1000 ? `${(ms / 1000).toFixed(1).replace('.
         </section>
       </div>
     </div>
+
+    <div class="metrics">
+      <section class="mblock">
+        <div class="mhead">
+          <h2>Когда пользователь видит товар</h2>
+          <span class="dim">Миллисекунды от начала загрузки. Замерено в самих кадрах.</span>
+        </div>
+
+        <div v-if="!marks.csr || !marks.ssr" class="dim mnote">
+          Нажмите «С начала» — вехи снимаются при отрисовке карточек.
+        </div>
+
+        <table v-else>
+          <thead>
+            <tr>
+              <th>Веха</th>
+              <th class="num">Клиентский<br><span class="dim">эталон</span></th>
+              <th class="num">SSR</th>
+              <th class="num">разница</th>
+            </tr>
+          </thead>
+          <tbody>
+            <tr>
+              <td>документ получен</td>
+              <td class="num">{{ marks.csr.document }} мс</td>
+              <td class="num">{{ marks.ssr.document }} мс</td>
+              <td class="num" :class="deltaClass(marks.csr.document, marks.ssr.document, true)">
+                {{ delta(marks.csr.document, marks.ssr.document) }}
+              </td>
+            </tr>
+            <tr class="caveat">
+              <td>первый пиксель<br><span class="dim">у клиентской это надпись, не товар</span></td>
+              <td class="num">{{ marks.csr.firstPaint }} мс</td>
+              <td class="num">{{ marks.ssr.firstPaint }} мс</td>
+              <td class="num">—</td>
+            </tr>
+            <tr class="tot">
+              <td>
+                ПЕРВОЕ ИЗОБРАЖЕНИЕ ВИДНО
+                <br><span class="dim">у SSR — плейсхолдер, у клиентского — фотография,
+                потому что до неё там пусто</span>
+              </td>
+              <td class="num">{{ marks.csr.firstImagery || '—' }} мс</td>
+              <td class="num">{{ marks.ssr.firstImagery || '—' }} мс</td>
+              <td class="num" :class="deltaClass(marks.csr.firstImagery, marks.ssr.firstImagery, true)">
+                {{ delta(marks.csr.firstImagery, marks.ssr.firstImagery) }}
+              </td>
+            </tr>
+            <tr>
+              <td>товар виден</td>
+              <td class="num">{{ marks.csr.cardsVisible }} мс</td>
+              <td class="num">{{ marks.ssr.cardsVisible }} мс</td>
+              <td class="num" :class="deltaClass(marks.csr.cardsVisible, marks.ssr.cardsVisible, true)">
+                {{ delta(marks.csr.cardsVisible, marks.ssr.cardsVisible) }}
+              </td>
+            </tr>
+          </tbody>
+        </table>
+
+        <p class="dim mnote">
+          Троттлинг здесь <b>не эмулируется</b>: сервер локальный, задержки сети почти нет.
+          Чтобы увидеть настоящую разницу, включите ограничение в DevTools → Network
+          и нажмите «С начала».
+        </p>
+      </section>
+
+      <section class="mblock">
+        <div class="mhead">
+          <h2>Начальный объём страницы</h2>
+          <span class="dim">HTML, стили, скрипты и ответы API. Изображения не в счёт — они одинаковы.</span>
+        </div>
+
+        <div v-if="!payloads.csr || !payloads.ssr" class="dim mnote">
+          Нажмите «С начала» — цифры снимаются с каждого кадра после загрузки.
+        </div>
+
+        <table v-else>
+          <thead>
+            <tr>
+              <th>Что</th>
+              <th class="num">Клиентский рендер<br><span class="dim">эталон</span></th>
+              <th class="num">SSR</th>
+              <th class="num">разница</th>
+            </tr>
+          </thead>
+          <tbody>
+            <tr v-for="row in payloadRows" :key="row.key" :class="{ tot: row.key === 'total' }">
+              <td>{{ row.label }}</td>
+              <td class="num">{{ fmt(payloads.csr[row.key]) }}</td>
+              <td class="num">{{ fmt(payloads.ssr[row.key]) }}</td>
+              <td class="num" :class="deltaClass(payloads.csr[row.key], payloads.ssr[row.key], row.lowerIsBetter)">
+                {{ delta(payloads.csr[row.key], payloads.ssr[row.key]) }}
+              </td>
+            </tr>
+            <tr>
+              <td>запросов</td>
+              <td class="num">{{ payloads.csr.requests }}</td>
+              <td class="num">{{ payloads.ssr.requests }}</td>
+              <td class="num">{{ payloads.ssr.requests - payloads.csr.requests }}</td>
+            </tr>
+          </tbody>
+        </table>
+      </section>
+
+      <section class="mblock">
+        <div class="mhead">
+          <h2>Что видит краулер без JS</h2>
+          <span class="dim">Разбор того самого HTML, который сервер отдаёт роботу.</span>
+          <button class="ghost" :disabled="seoBusy" @click="runSeoAudit()">
+            {{ seoBusy ? 'Проверяю…' : 'Проверить' }}
+          </button>
+        </div>
+
+        <div v-if="!seo.csr || !seo.ssr" class="dim mnote">
+          Нажмите «Проверить» — сервер запросит обе страницы и разберёт их разметку.
+        </div>
+
+        <table v-else>
+          <thead>
+            <tr>
+              <th>Что</th>
+              <th class="num">Клиентский рендер<br><span class="dim">эталон</span></th>
+              <th class="num">SSR</th>
+            </tr>
+          </thead>
+          <tbody>
+            <tr v-for="row in seoRows" :key="row.key" :class="{ caveat: row.key === 'images' || row.key === 'imagesWithAlt' }">
+              <td>{{ row.label }}</td>
+              <td class="num" :class="{ bad: row.moreIsBetter && !seo.csr[row.key] }">
+                {{ typeof seo.csr[row.key] === 'number' ? seo.csr[row.key] : seo.csr[row.key] || '—' }}
+              </td>
+              <td class="num" :class="{ good: row.moreIsBetter && seo.ssr[row.key] > seo.csr[row.key] }">
+                {{ typeof seo.ssr[row.key] === 'number' ? seo.ssr[row.key] : seo.ssr[row.key] || '—' }}
+              </td>
+            </tr>
+          </tbody>
+        </table>
+
+        <p v-if="seo.ssr" class="dim mnote">
+          <b>По тегам img тут сравнивать нельзя</b> (строки выделены): в этой демке их
+          ставит JS ради контроля порядка загрузки. В продакшне <code>&lt;img&gt;</code> с
+          <code>src</code>, <code>srcset</code> и <code>alt</code> рендерил бы сервер,
+          а плейсхолдер лежал бы фоном рамки. Сравнивать надо по названиям товаров,
+          тексту и весу документа.
+        </p>
+      </section>
+    </div>
   </div>
 </template>
 
@@ -238,7 +455,30 @@ const fmtMs = (ms: number) => (ms >= 1000 ? `${(ms / 1000).toFixed(1).replace('.
 
 iframe { width: 100%; height: 620px; border: 0; background: var(--bg); display: block; }
 
+/* ——— таблицы сравнения ——— */
+.metrics {
+  max-width: 1500px; margin: 0 auto; padding: 34px 20px 80px;
+  display: grid; grid-template-columns: 1fr 1fr; gap: 30px; align-items: start;
+}
+.mblock { min-width: 0; }
+.mhead { display: flex; align-items: baseline; gap: 12px; flex-wrap: wrap; margin-bottom: 4px; }
+.mhead h2 { margin: 0; font-size: 17px; }
+.mhead .dim { font-size: 13px; flex: 1 1 240px; }
+.mnote { font-size: 13px; padding: 14px 0; }
+
+.metrics table { border-collapse: collapse; width: 100%; font-size: 13.5px; margin-top: 10px; }
+.metrics th, .metrics td { text-align: left; padding: 7px 10px; border-bottom: 1px solid var(--line); }
+.metrics th { font-size: 11.5px; text-transform: uppercase; letter-spacing: .04em; color: var(--dim); font-weight: 600; }
+.metrics th .dim { text-transform: none; letter-spacing: 0; font-size: 11px; }
+.metrics .num { text-align: right; font-family: ui-monospace, Menlo, monospace; white-space: nowrap; }
+.metrics tr.tot td { font-weight: 700; border-top: 1px solid var(--line); }
+.metrics .good { color: var(--rec); }
+.metrics .bad { color: #d97706; }
+/* Показатели, которые в этой демке не сравнимы между стратегиями. */
+.metrics tr.caveat td { opacity: .45; }
+
 @media (max-width: 1000px) {
   .stage-inner { grid-template-columns: 1fr; }
+  .metrics { grid-template-columns: 1fr; }
 }
 </style>
