@@ -15,8 +15,17 @@
 import sharp from 'sharp';
 import { createHash } from 'node:crypto';
 
-/** Ширина плейсхолдера в пикселях. */
-export const PLACEHOLDER_WIDTH = 20;
+/**
+ * Ширины плейсхолдера, которые считаются при загрузке.
+ *
+ * Считаем СРАЗУ ВСЕ, а не одну: каждая стоит около двух миллисекунд и полкилобайта,
+ * зато интерфейс переключает детальность мгновенно, без перезаливки файла.
+ * Подобрать параметр на глазок иначе невозможно — а именно это и нужно.
+ */
+export const PLACEHOLDER_WIDTHS = [12, 20, 32, 50] as const;
+
+/** Ширина по умолчанию — компромисс веса и узнаваемости. */
+export const DEFAULT_PLACEHOLDER_WIDTH = 20;
 
 /** Качество WebP для плейсхолдера. */
 const PLACEHOLDER_QUALITY = 40;
@@ -47,9 +56,9 @@ export interface Processed {
   originalBytes: number;
   originalKey: string;
   originalMime: string;
-  /** base64 БЕЗ префикса `data:` — префикс собирается при рендере. */
-  placeholderBase64: string;
-  /** Формат плейсхолдера; нужен, чтобы собрать правильный префикс. */
+  /** base64 БЕЗ префикса `data:`, по одному на каждую ширину из PLACEHOLDER_WIDTHS. */
+  placeholders: Record<string, string>;
+  /** Формат плейсхолдеров; нужен, чтобы собрать правильный префикс. */
   placeholderFormat: 'webp';
   variants: Variant[];
   /** Тайминги по шагам, миллисекунды — их показывает демка. */
@@ -132,14 +141,19 @@ export async function processImage(input: Buffer, sizes: number[] = DEFAULT_SIZE
     ),
   );
 
-  // Плейсхолдер — из самой мелкой видимой копии, а не из оригинала.
+  // Плейсхолдеры — из самой мелкой видимой копии, а не из оригинала.
   const smallest = variants[0]!;
-  const placeholder = await clock('placeholder', async () => {
-    const buf = await sharp(smallest.body)
-      .resize({ width: PLACEHOLDER_WIDTH })
-      .webp({ quality: PLACEHOLDER_QUALITY })
-      .toBuffer();
-    return buf.toString('base64');
+  const placeholders = await clock('placeholders', async () => {
+    const entries = await Promise.all(
+      PLACEHOLDER_WIDTHS.map(async (w) => {
+        const buf = await sharp(smallest.body)
+          .resize({ width: Math.min(w, smallest.width) })
+          .webp({ quality: PLACEHOLDER_QUALITY })
+          .toBuffer();
+        return [String(w), buf.toString('base64')] as const;
+      }),
+    );
+    return Object.fromEntries(entries);
   });
 
   return {
@@ -149,7 +163,7 @@ export async function processImage(input: Buffer, sizes: number[] = DEFAULT_SIZE
     originalBytes: input.length,
     originalKey: `${hash}/original.${meta.format}`,
     originalMime: `image/${meta.format}`,
-    placeholderBase64: placeholder,
+    placeholders,
     placeholderFormat: 'webp',
     variants,
     timings,

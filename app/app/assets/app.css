@@ -128,3 +128,10 @@ td.num { font-family: ui-monospace, Menlo, monospace; white-space: nowrap; }
 @media (max-width: 760px) {
   .product { grid-template-columns: minmax(0, 1fr); gap: 22px; }
 }
+
+/* Предупреждение — когда параметр демки уводит в минус по смыслу. */
+.note-warn { border-left-color: #d97706; }
+
+/* Переключатель-флажок в панели управления. */
+.toggle { cursor: pointer; user-select: none; }
+.toggle input { accent-color: var(--accent); margin: 0; }

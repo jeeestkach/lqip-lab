@@ -9,7 +9,7 @@
  * Разделение на очередь понадобится, когда добавится AVIF (≈2 с на копию).
  */
 
-import { processImage, DEFAULT_SIZES, toDataUri } from '../../utils/pipeline';
+import { processImage, DEFAULT_SIZES, DEFAULT_PLACEHOLDER_WIDTH, toDataUri } from '../../utils/pipeline';
 import type { ImageRecord } from '../../utils/db';
 
 /** Разбирает `sizes=300,640` в массив ширин. */
@@ -30,8 +30,15 @@ export function toPublic(record: ImageRecord, storage: { url(key: string): strin
     title: record.title,
     width: record.width,
     height: record.height,
-    // Готовый data URI с префиксом — клиенту не надо ничего доклеивать.
-    placeholder: toDataUri(record.placeholder, record.placeholderFormat),
+    // Готовые data URI с префиксом — клиенту не надо ничего доклеивать.
+    placeholder: toDataUri(
+      record.placeholders[String(DEFAULT_PLACEHOLDER_WIDTH)] ?? Object.values(record.placeholders)[0]!,
+      record.placeholderFormat,
+    ),
+    // Все посчитанные ширины: интерфейс переключает детальность без перезаливки.
+    placeholders: Object.fromEntries(
+      Object.entries(record.placeholders).map(([w, b64]) => [w, toDataUri(b64, record.placeholderFormat)]),
+    ),
     original: { url: storage.url(record.originalKey), bytes: record.originalBytes },
     variants: sorted.map((v) => ({
       width: v.width,
@@ -99,7 +106,7 @@ export default defineEventHandler(async (event) => {
       originalBytes: processed.originalBytes,
       width: processed.width,
       height: processed.height,
-      placeholder: processed.placeholderBase64,
+      placeholders: processed.placeholders,
       placeholderFormat: processed.placeholderFormat,
       variants: processed.variants.map(({ body, ...v }) => v),
       title: defaultTitle || (file.filename ?? 'Без названия').replace(/\.[^.]+$/, ''),

@@ -31,9 +31,9 @@ export interface ImageRecord {
   originalBytes: number;
   width: number;
   height: number;
-  /** base64 плейсхолдера БЕЗ префикса `data:`. */
-  placeholder: string;
-  /** Формат плейсхолдера — нужен, чтобы собрать префикс при рендере. */
+  /** base64 плейсхолдеров БЕЗ префикса `data:`, ключ — ширина в пикселях. */
+  placeholders: Record<string, string>;
+  /** Формат плейсхолдеров — нужен, чтобы собрать префикс при рендере. */
   placeholderFormat: string;
   variants: StoredVariant[];
   /** Подпись товара — демка показывает карточки, а не голые файлы. */

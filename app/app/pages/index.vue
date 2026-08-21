@@ -8,23 +8,8 @@
  * пользователь уже видит раскладку и цвета.
  */
 
-const route = useRoute();
-const router = useRouter();
-
-/**
- * Задержка живёт в АДРЕСЕ страницы, а не в локальном состоянии.
- *
- * Иначе демка не показывает того, ради чего сделана: смена значения после
- * гидратации лишь меняет src у существующих <img>, а браузер держит на экране
- * прежнюю картинку, пока грузится новая. Настоящий первый пейнт с плейсхолдером
- * виден только при загрузке страницы, у которой задержка уже учтена на сервере.
- */
-const delay = computed(() => Number.parseInt(String(route.query.delay ?? '0'), 10) || 0);
-
-/** Меняет задержку через навигацию — это перезагружает страницу целиком. */
-function setDelay(value: number) {
-  router.push({ query: value ? { delay: String(value) } : {} });
-}
+/** Задержка отдачи файлов, мс. Живёт в адресе — см. composables/useQueryParam.ts. */
+const delay = useQueryParam('delay', 0);
 
 const { data, refresh } = await useFetch('/api/images');
 
@@ -50,7 +35,7 @@ const fmt = (n: number) => (n < 1024 ? `${n} B` : `${(n / 1024).toFixed(1)} КБ
     <div class="controls">
       <label>
         задержка CDN
-        <select :value="delay" @change="setDelay(Number(($event.target as HTMLSelectElement).value))">
+        <select v-model.number="delay">
           <option :value="0">нет</option>
           <option :value="600">0,6 с</option>
           <option :value="2000">2 с</option>

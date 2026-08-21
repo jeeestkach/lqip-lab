@@ -8,13 +8,9 @@
  */
 
 const route = useRoute();
-const router = useRouter();
 
-/** Задержка в адресе — по той же причине, что и в каталоге (см. pages/index.vue). */
-const delay = computed(() => Number.parseInt(String(route.query.delay ?? '0'), 10) || 0);
-function setDelay(value: number) {
-  router.push({ query: value ? { delay: String(value) } : {} });
-}
+/** Задержка отдачи файлов, мс. */
+const delay = useQueryParam('delay', 0);
 
 const full = ref(false);
 
@@ -44,7 +40,7 @@ const largest = computed(() => img.value!.variants[img.value!.variants.length - 
       <button v-if="full" class="ghost" @click="full = false">Сбросить к ступени 2</button>
       <label>
         задержка CDN
-        <select :value="delay" @change="setDelay(Number(($event.target as HTMLSelectElement).value))">
+        <select v-model.number="delay">
           <option :value="0">нет</option>
           <option :value="600">0,6 с</option>
           <option :value="2000">2 с</option>
