@@ -70,6 +70,10 @@ export function buildCards(images: any[] | undefined, params: DemoParams) {
       price: 350 + i * 37,
       url: `${variant.url}?speed=${params.speed}`,
       bytes: variant.bytes,
+      /** Полный набор размеров — для нативной загрузки браузером. */
+      srcset: src.variants
+        .map((v: any) => `${v.url}?speed=${params.speed} ${v.width}w`)
+        .join(', '),
     };
   });
 }

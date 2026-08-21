@@ -44,7 +44,7 @@ function run() {
 // иначе стратегия перестала бы быть честной.
 watch(cards, (list) => { if (list?.length) run(); });
 
-const { post, offset, markFirstImagery, markCardsVisible } = useDemoFrame({
+const { post, offset, markFirstImagery, markCardsVisible, markFirstPhoto } = useDemoFrame({
   strategy: 'csr',
   onRun: () => { if (cards.value?.length) run(); },
   onStop: loader.stop,
@@ -61,7 +61,7 @@ watch(
 
 // До первой настоящей фотографии на месте картинки пусто — отмечать нечего.
 watch(() => loader.done.value.size, (n) => {
-  if (n) nextTick(() => requestAnimationFrame(() => markFirstImagery()));
+  if (n) nextTick(() => requestAnimationFrame(() => { markFirstImagery(); markFirstPhoto(); }));
 });
 
 watch(

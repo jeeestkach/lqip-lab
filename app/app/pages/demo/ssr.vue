@@ -19,6 +19,16 @@ useHead({
 });
 
 const params = useDemoParams();
+const route = useRoute();
+
+/**
+ * Режим загрузки изображений. Только для серверной стратегии — клиентская
+ * не меняется, иначе сравнивать было бы нечего.
+ */
+const mode = computed<'queue' | 'lazy' | 'eager' | 'auto'>(() => {
+  const m = String(route.query.load ?? 'auto');
+  return m === 'lazy' || m === 'eager' || m === 'queue' ? m : 'auto';
+});
 
 // Ключевое отличие от клиентской стратегии: данные берутся НА СЕРВЕРЕ,
 // поэтому карточки и плейсхолдеры попадают в HTML.
@@ -60,14 +70,31 @@ const loader = useSequentialImages();
 
 /** Начинает прогон заново. Вызывается и снаружи — со страницы сравнения. */
 function run() {
+  // В нативных режимах очередь не нужна: ссылки уже в разметке, грузит браузер.
+  if (mode.value !== 'queue') return;
   loader.start(
     (cards.value ?? []).map((c) => ({ key: c.key, url: c.url })),
     params.concurrency,
   );
 }
 
+/** Считает загруженные в нативных режимах — для той же статистики наверх. */
+const nativeDone = ref(0);
+function onImageLoaded() {
+  nativeDone.value += 1;
+  if (nativeDone.value === 1) markFirstPhoto();
+  post({
+    type: 'demo:progress',
+    strategy: 'ssr',
+    done: nativeDone.value,
+    total: (cards.value ?? []).length,
+    elapsed: Math.round(performance.now()),
+    bytes: 0,
+  });
+}
+
 // Родитель дирижирует прогоном обоих кадров и держит их прокрутку согласованной.
-const { post, offset, markFirstImagery, markCardsVisible } = useDemoFrame({ strategy: 'ssr', onRun: run, onStop: loader.stop });
+const { post, offset, markFirstImagery, markCardsVisible, markFirstPhoto } = useDemoFrame({ strategy: 'ssr', onRun: run, onStop: loader.stop });
 
 onMounted(run);
 
@@ -88,6 +115,9 @@ watch(
   { immediate: true },
 );
 
+// В режиме очереди фотография приходит через загрузчик.
+watch(() => loader.done.value.size, (n) => { if (n) markFirstPhoto(); });
+
 watch(
   () => [loader.done.value.size, loader.running.value],
   () => post({
@@ -104,7 +134,13 @@ watch(
 <template>
   <div class="demo-viewport">
     <div class="demo-page" :style="{ transform: `translateY(${-offset}px)` }">
-    <DemoGrid :cards="cards ?? []" :loaded="loader.done.value" :with-placeholder="true" />
+    <DemoGrid
+      :cards="cards ?? []"
+      :loaded="loader.done.value"
+      :with-placeholder="true"
+      :mode="mode"
+      @image-loaded="onImageLoaded"
+    />
     </div>
   </div>
 </template>

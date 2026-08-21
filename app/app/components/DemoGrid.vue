@@ -17,15 +17,71 @@ interface Card {
   /** Ключ правила с плейсхолдером в общем блоке стилей. */
   phKey: string;
   price: number;
+  /** Ссылка на карточную копию — для нативной загрузки. */
+  url?: string;
+  /** Набор размеров — для нативной загрузки. */
+  srcset?: string;
 }
 
-defineProps<{
+/**
+ * Как грузятся изображения.
+ *
+ * `queue`  — ссылки подставляет JS по очереди. Полный контроль порядка,
+ *            но в разметке нет ни одного тега `<img>`: для поиска по картинкам
+ *            страница пуста.
+ * `lazy`   — настоящий `src` и `srcset` прямо в серверной разметке,
+ *            `loading="lazy"`. Браузер сам решает, что и когда грузить.
+ * `eager`  — то же, но `loading="eager"`: всё начинает грузиться сразу,
+ *            включая карточки далеко за экраном.
+ * `auto`   — первый экран `eager` с высоким приоритетом, остальное `lazy`.
+ *            Рекомендуемый вариант: верх начинает грузиться предсканером
+ *            ещё при разборе HTML, а низ не отбирает у него полосу.
+ */
+export type LoadMode = 'queue' | 'lazy' | 'eager' | 'auto';
+
+const props = defineProps<{
   cards: Card[];
-  /** Готовые изображения по ключу карточки. */
+  /** Готовые изображения по ключу карточки. Используется только в режиме `queue`. */
   loaded: Map<string, { objectUrl: string; bytes: number; ms: number }>;
   /** Показывать ли размытый плейсхолдер до прихода файла. */
   withPlaceholder: boolean;
+  mode?: LoadMode;
 }>();
+
+const emit = defineEmits<{ imageLoaded: [key: string] }>();
+
+const mode = computed<LoadMode>(() => props.mode ?? 'queue');
+const isNative = computed(() => mode.value !== 'queue');
+
+/** Карточки, чьи изображения браузер уже загрузил (для нативных режимов). */
+const nativeLoaded = ref(new Set<string>());
+
+function onNativeLoad(key: string) {
+  nativeLoaded.value = new Set(nativeLoaded.value).add(key);
+  emit('imageLoaded', key);
+}
+
+/** Сколько первых карточек считаем «первым экраном». */
+const ABOVE_FOLD = 6;
+
+/**
+ * Грузить ли эту карточку немедленно.
+ *
+ * `loading="lazy"` откладывает запрос до вычисления раскладки, а это уже после
+ * разбора документа — замер показал 2065 мс против 615 мс. Поэтому первому
+ * экрану ленивость строго противопоказана: его должен подхватить предсканер,
+ * который читает `src` прямо из разметки, ещё не дойдя до конца HTML.
+ */
+function eagerFor(index: number): boolean {
+  if (mode.value === 'eager') return true;
+  if (mode.value === 'auto') return index < ABOVE_FOLD;
+  return false;
+}
+
+/** Загружено ли изображение этой карточки — в любом из режимов. */
+function isLoaded(key: string): boolean {
+  return isNative.value ? nativeLoaded.value.has(key) : props.loaded.has(key);
+}
 </script>
 
 <template>
@@ -41,12 +97,30 @@ defineProps<{
         class="dcard-media"
         :class="[
           withPlaceholder ? ['has-ph', `ph-${card.phKey}`] : [],
-          { 'is-loaded': loaded.has(card.key) },
+          { 'is-loaded': isLoaded(card.key) },
         ]"
         :style="{ aspectRatio: `${card.width} / ${card.height}` }"
       >
+        <!--
+          В нативных режимах тег с настоящим `src` рендерит СЕРВЕР. Это и даёт
+          то, чего не даёт `data-src`: поиск по картинкам индексирует только
+          настоящий `src` или `srcset`, а `data-src` для него пустое место.
+        -->
         <img
-          v-if="loaded.has(card.key)"
+          v-if="isNative"
+          :src="card.url"
+          :srcset="card.srcset"
+          sizes="(max-width: 620px) 50vw, 240px"
+          :alt="card.title"
+          :width="card.width"
+          :height="card.height"
+          :loading="eagerFor(card.index) ? 'eager' : 'lazy'"
+          :fetchpriority="eagerFor(card.index) ? 'high' : 'auto'"
+          decoding="async"
+          @load="onNativeLoad(card.key)"
+        >
+        <img
+          v-else-if="loaded.has(card.key)"
           :src="loaded.get(card.key)!.objectUrl"
           :alt="card.title"
           :width="card.width"

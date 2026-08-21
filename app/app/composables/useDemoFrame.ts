@@ -65,6 +65,14 @@ export interface Milestones {
    * а не «когда пришёл файл» — сравнивать честнее именно так.
    */
   firstImagery: number;
+  /**
+   * Первая НАСТОЯЩАЯ фотография отрисована.
+   *
+   * Отличается от `firstImagery`: у серверной стратегии там плейсхолдер,
+   * а здесь именно фотография. Нужна, чтобы сравнивать режимы загрузки
+   * между собой — очередь под управлением JS против нативной загрузки браузером.
+   */
+  firstPhoto: number;
 }
 
 export interface DemoFrameOptions {
@@ -142,6 +150,8 @@ export function useDemoFrame(opts: DemoFrameOptions) {
   let firstImagery = 0;
   /** Момент, когда стали видны карточки товара. */
   let cardsVisible = 0;
+  /** Момент прихода первой настоящей фотографии. */
+  let firstPhoto = 0;
 
   /** Время первого пейнта, если он уже случился. */
   function firstPaintTime(): number | null {
@@ -160,6 +170,13 @@ export function useDemoFrame(opts: DemoFrameOptions) {
   function markFirstImagery(atFirstPaint = false) {
     if (firstImagery) return;
     firstImagery = (atFirstPaint ? firstPaintTime() : null) ?? Math.round(performance.now());
+    reportMilestones();
+  }
+
+  /** Отмечает первую отрисованную фотографию. Повторные вызовы игнорируются. */
+  function markFirstPhoto() {
+    if (firstPhoto) return;
+    firstPhoto = Math.round(performance.now());
     reportMilestones();
   }
 
@@ -185,6 +202,7 @@ export function useDemoFrame(opts: DemoFrameOptions) {
         firstPaint: Math.round(paint?.startTime ?? 0),
         cardsVisible: cardsVisible || Math.round(performance.now()),
         firstImagery,
+        firstPhoto,
       },
     });
   }
@@ -220,5 +238,5 @@ export function useDemoFrame(opts: DemoFrameOptions) {
     observer?.disconnect();
   });
 
-  return { post, offset, reportMilestones, markFirstImagery, markCardsVisible };
+  return { post, offset, reportMilestones, markFirstImagery, markCardsVisible, markFirstPhoto };
 }
