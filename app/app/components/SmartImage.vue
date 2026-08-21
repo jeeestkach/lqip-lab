@@ -58,39 +58,121 @@ const srcset = computed(() => usable.value.map((v) => `${withDelay(v.url)} ${v.w
 const src = computed(() => withDelay(usable.value[usable.value.length - 1]!.url));
 
 const loaded = ref(false);
+const imgEl = ref<HTMLImageElement | null>(null);
+
+/**
+ * Включает плавное проявление. Выключено до гидратации намеренно.
+ *
+ * Анимация прячет картинку (`opacity: 0`) и показывает её по событию `load`.
+ * Если включить это на сервере, получим две поломки:
+ *   1) без JS изображение останется невидимым навсегда;
+ *   2) картинка из кеша успевает выстрелить `load` ДО гидратации, обработчик
+ *      уже не сработает — и она тоже останется невидимой.
+ * Поэтому по умолчанию картинка видима, а анимация включается только на клиенте
+ * и только для тех файлов, что на момент монтирования ещё не пришли.
+ */
+const fade = ref(false);
+
+onMounted(() => {
+  if (imgEl.value?.complete && imgEl.value.naturalWidth > 0) {
+    loaded.value = true;
+  } else {
+    fade.value = true;
+  }
+});
 </script>
 
 <template>
-  <img
-    :src="src"
-    :srcset="srcset"
-    :sizes="sizes"
-    :width="width"
-    :height="height"
-    :alt="alt"
-    :loading="priority ? 'eager' : 'lazy'"
-    :fetchpriority="priority ? 'high' : 'auto'"
-    decoding="async"
+  <div
     class="smart-image"
-    :class="{ 'is-loaded': loaded }"
-    :style="{
-      backgroundImage: `url(${placeholder})`,
-      backgroundSize: 'cover',
-      backgroundPosition: 'center',
-      aspectRatio: `${width} / ${height}`,
-    }"
-    @load="loaded = true"
+    :style="{ aspectRatio: `${width} / ${height}`, '--ph': `url(${placeholder})` }"
+    :class="{ 'is-loaded': loaded, 'is-fading': fade }"
   >
+    <img
+      ref="imgEl"
+      :src="src"
+      :srcset="srcset"
+      :sizes="sizes"
+      :width="width"
+      :height="height"
+      :alt="alt"
+      :loading="priority ? 'eager' : 'lazy'"
+      :fetchpriority="priority ? 'high' : 'auto'"
+      decoding="async"
+      @load="loaded = true"
+    >
+  </div>
 </template>
 
 <style scoped>
 .smart-image {
   display: block;
+  position: relative;
   width: 100%;
-  height: auto;
-  object-fit: cover;
-  /* Плейсхолдер — это 20 пикселей, растянутые на всю ширину. Браузер сглаживает
-     их при увеличении, и размытие получается само; фильтр лишь прячет края. */
+  overflow: hidden;
   background-color: var(--panel);
+}
+
+.smart-image img {
+  display: block;
+  position: relative;
+  z-index: 1;
+  width: 100%;
+  height: 100%;
+  object-fit: cover;
+}
+
+/**
+ * Плейсхолдер отдельным слоем, а не фоном на самом <img>.
+ *
+ * Фоном на теге он остаётся резко-квадратным: браузер растягивает 20 пикселей
+ * билинейной интерполяцией, а она сглаживает только соседние пиксели и на
+ * десятикратном увеличении даёт мягкие квадраты, а не размытие. Настоящий блюр
+ * даёт filter, но повесить его на <img> нельзя — он размоет и загруженную картинку.
+ *
+ * Псевдоэлемент решает обе задачи: <img> сохраняет alt, srcset и семантику,
+ * а фильтр действует только на плейсхолдер. Пришедший файл рисуется поверх.
+ */
+.smart-image::before {
+  content: '';
+  position: absolute;
+  inset: 0;
+  background-image: var(--ph);
+  background-size: cover;
+  background-position: center;
+  filter: blur(12px);
+  /* Блюр размывает и края — увеличиваем, чтобы кайма ушла за overflow: hidden. */
+  transform: scale(1.15);
+}
+
+/* ——— плавная подмена ———
+ *
+ * Порядок важен. Сначала картинка ПРОЯВЛЯЕТСЯ поверх размытого слоя, и только
+ * когда стала полностью непрозрачной, слой гаснет. Если гасить их одновременно,
+ * в середине перехода оба полупрозрачны, сквозь них просвечивает фон контейнера
+ * и получается вспышка.
+ *
+ * Гасить слой всё-таки нужно: у картинок с альфа-каналом он иначе просвечивал бы
+ * сквозь прозрачные места и после загрузки.
+ */
+.smart-image.is-fading img {
+  opacity: 0;
+  transition: opacity .45s ease;
+}
+
+.smart-image.is-fading.is-loaded img {
+  opacity: 1;
+}
+
+.smart-image.is-fading.is-loaded::before {
+  opacity: 0;
+  transition: opacity .3s ease .45s;
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .smart-image.is-fading img,
+  .smart-image.is-fading.is-loaded::before {
+    transition: none;
+  }
 }
 </style>

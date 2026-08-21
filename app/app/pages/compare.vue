@@ -75,6 +75,24 @@ function cardUrl(img: any): string | undefined {
 function isEager(index: number): boolean {
   return index < preload.value;
 }
+
+/** Ключи карточек, чьи файлы уже пришли. */
+const loadedKeys = ref(new Set<string>());
+
+/**
+ * Плавное проявление включается только на клиенте.
+ *
+ * Анимация прячет картинку до события `load`. На сервере это дало бы две поломки:
+ * без JS изображения остались бы невидимыми, а файлы из кеша успевают выстрелить
+ * `load` до гидратации, и обработчик к ним уже не применится. Поэтому по умолчанию
+ * картинка видима, а анимация включается после монтирования.
+ */
+const fade = ref(false);
+onMounted(() => { fade.value = true; });
+
+function onLoad(key: string) {
+  loadedKeys.value.add(key);
+}
 </script>
 
 <template>
@@ -178,15 +196,19 @@ function isEager(index: number): boolean {
         <h2 class="ab-head ab-head-good">С плейсхолдером в HTML</h2>
         <div class="ab-grid">
           <article v-for="img in items" :key="`b-${img.key}`" class="pcard">
-            <div class="pcard-media" :style="{ aspectRatio: `${img.width} / ${img.height}` }">
+            <div
+              class="pcard-media has-ph"
+              :class="{ 'is-fading': fade, 'is-loaded': loadedKeys.has(`b-${img.key}`) }"
+              :style="{ aspectRatio: `${img.width} / ${img.height}`, '--ph': `url(${ph(img)})` }"
+            >
               <img
                 :src="cardUrl(img)"
+                @load="onLoad(`b-${img.key}`)"
                 :alt="showPlaceholdersOnly ? '' : img.title"
                 :width="img.width"
                 :height="img.height"
                 :loading="isEager(img.index) ? 'eager' : 'lazy'"
                 decoding="async"
-                :style="{ backgroundImage: `url(${ph(img)})`, backgroundSize: 'cover', backgroundPosition: 'center' }"
               >
             </div>
             <div class="pcard-body">
@@ -239,7 +261,60 @@ function isEager(index: number): boolean {
 
 .pcard { border: 1px solid var(--line); border-radius: 10px; overflow: hidden; background: var(--panel); }
 .pcard-media { position: relative; overflow: hidden; background: var(--bg); }
-.pcard-media img { display: block; width: 100%; height: 100%; object-fit: cover; }
+.pcard-media img { display: block; width: 100%; height: 100%; object-fit: cover; position: relative; z-index: 1; }
+
+/**
+ * Плейсхолдер отдельным слоем, а не фоном на самом <img>.
+ *
+ * Фоном на теге он остаётся резко-квадратным: браузер растягивает 20 пикселей
+ * до двухсот билинейной интерполяцией, а она сглаживает только соседние пиксели
+ * и на одиннадцатикратном увеличении даёт мягкие квадраты, а не размытие.
+ * Настоящий блюр даёт filter, но повесить его на <img> нельзя — он размоет
+ * и загруженную картинку тоже.
+ *
+ * Псевдоэлемент решает обе задачи: лишнего ТЕГА в разметке не появляется,
+ * <img> сохраняет alt и srcset, а фильтр действует только на плейсхолдер.
+ * Когда настоящий файл приходит, он рисуется поверх (z-index) и слой не виден.
+ */
+.pcard-media.has-ph::before {
+  content: '';
+  position: absolute;
+  inset: 0;
+  background-image: var(--ph);
+  background-size: cover;
+  background-position: center;
+  filter: blur(10px);
+  /* Блюр размывает и края тоже — увеличиваем, чтобы прозрачная кайма
+     ушла за пределы overflow: hidden. */
+  transform: scale(1.15);
+}
+
+/* ——— плавная подмена ———
+ *
+ * Сначала картинка проявляется поверх размытого слоя, и только став полностью
+ * непрозрачной, слой гаснет. Одновременное гашение дало бы вспышку: в середине
+ * перехода оба полупрозрачны и сквозь них просвечивает фон контейнера.
+ */
+.pcard-media.is-fading img {
+  opacity: 0;
+  transition: opacity .45s ease;
+}
+
+.pcard-media.is-fading.is-loaded img {
+  opacity: 1;
+}
+
+.pcard-media.is-fading.is-loaded::before {
+  opacity: 0;
+  transition: opacity .3s ease .45s;
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .pcard-media.is-fading img,
+  .pcard-media.is-fading.is-loaded::before {
+    transition: none;
+  }
+}
 .pcard-body { padding: 8px 10px 10px; }
 .pcard-title { font-size: 12px; line-height: 1.3; height: 2.6em; overflow: hidden; }
 .pcard-price { font-size: 13px; font-weight: 700; margin-top: 4px;

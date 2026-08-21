@@ -73,8 +73,9 @@ code, pre { font-family: ui-monospace, SFMono-Regular, Menlo, monospace; }
   background: var(--panel); border: 1px solid var(--line);
 }
 .ph { position: absolute; inset: 0; background-position: center; }
-/* Блюр «вытекает» за края — прячем его увеличением внутри overflow:hidden. */
-.ph.blur { filter: blur(12px); transform: scale(1.12); }
+/* Блюр размывает и края тоже — увеличиваем, чтобы полупрозрачная кайма
+   ушла за пределы overflow:hidden у .frame. */
+.ph.blur { filter: blur(12px); transform: scale(1.15); }
 .real {
   position: absolute; inset: 0; width: 100%; height: 100%;
   object-fit: cover; opacity: 0; transition: opacity .45s ease;
@@ -699,15 +700,42 @@ li { margin-bottom: 7px; }
         Получается 234 B двоичных данных.</li>
       <li><b>Переводим в base64.</b> Текст на треть длиннее двоичного —
         итого 335 B вместе с префиксом <code>data:image/webp;base64,</code>.</li>
-      <li><b>Кладём фоном на сам <code>&lt;img&gt;</code></b> с <code>background-size:cover</code>.
-        Браузер растягивает 20 пикселей на всю ширину блока — и <b>размытие получается само собой</b>,
-        просто из-за сглаживания при увеличении. Отдельный <code>filter:blur()</code> нужен лишь для того,
-        чтобы спрятать квадратики на краях.</li>
+      <li><b>Растягиваем на всю ширину блока и размываем.</b> Оба шага обязательны, и второй —
+        не косметика. Браузер растягивает 20 пикселей на двести с лишним,
+        то есть примерно в <b>десять раз</b>, билинейной интерполяцией. Она сглаживает только соседние
+        пиксели, поэтому на таком увеличении даёт <b>мягкие квадраты, а не размытие</b> —
+        картинка выглядит просто очень плохой, а не намеренно размытой.
+        Настоящий блюр даёт <code>filter: blur()</code>.</li>
     </ol>
   </div>
 </div>
 
-<p>Когда настоящий файл догрузился, браузер рисует его <b>поверх</b> фона — тот остаётся под картинкой.
+<div class="note">
+<b>Где именно живёт плейсхолдер — тонкость, на которой легко ошибиться.</b>
+Заманчиво положить его фоном прямо на <code>&lt;img&gt;</code>: не нужен лишний элемент, и загруженная
+картинка накрывает фон сама. Но тогда <b>нельзя применить <code>filter</code></b> — он размоет
+и пришедшую картинку тоже, ведь это один и тот же элемент.
+<br><br>
+Решение — <b>псевдоэлемент</b>: лишнего <i>тега</i> в разметке всё равно не появляется,
+<code>&lt;img&gt;</code> сохраняет <code>alt</code> и <code>srcset</code>, а фильтр действует
+только на плейсхолдер. Когда файл приходит, он рисуется поверх по <code>z-index</code>.
+</div>
+
+<pre><code>&lt;div class=&quot;ph-frame&quot; style=&quot;--ph:url('data:image/webp;base64,…');aspect-ratio:1200/1697&quot;&gt;
+  &lt;img src=&quot;photo-1280.webp&quot; srcset=&quot;…&quot; sizes=&quot;…&quot;
+       width=&quot;1200&quot; height=&quot;1697&quot; alt=&quot;Описание&quot; decoding=&quot;async&quot;&gt;
+&lt;/div&gt;
+
+.ph-frame            { position:relative; overflow:hidden; }
+.ph-frame::before    { content:''; position:absolute; inset:0;
+                       background:var(--ph) center/cover;
+                       filter:blur(12px); transform:scale(1.15); }
+.ph-frame img        { position:relative; z-index:1; width:100%; height:100%; object-fit:cover; }</code></pre>
+
+<p><code>transform: scale(1.15)</code> здесь обязателен: блюр размывает и края тоже, и без увеличения
+по периметру остаётся полупрозрачная кайма. Увеличение уводит её за пределы <code>overflow:hidden</code>.</p>
+
+<p>Когда настоящий файл догрузился, браузер рисует его поверх — размытый слой остаётся под картинкой.
 Подменять ничего не надо, JS не участвует. Побочная польза: если картинка не загрузится вовсе,
 на месте останется размытое пятно, а не битая иконка.</p>
 
@@ -718,21 +746,21 @@ li { margin-bottom: 7px; }
 Технически data-URI в <code>srcset</code> вписать можно, но это ошибка по смыслу: браузер возьмёт его
 как окончательную картинку и на узком экране навсегда покажет размытое пятно вместо фотографии.</p>
 
-<p>Правильная разметка — обычный <code>&lt;img&gt;</code>, где плейсхолдер живёт в <code>style</code>,
+<p>Правильная разметка — обычный <code>&lt;img&gt;</code> внутри рамки с плейсхолдером,
 и <b>ничего для SEO не теряется</b>:</p>
 
-<pre><code>&lt;img
-  src=&quot;photo-1280.webp&quot;
-  srcset=&quot;photo-320.webp   320w,
-          photo-640.webp   640w,
-          photo-1280.webp 1280w,
-          photo-2560.webp 2560w&quot;
-  sizes=&quot;(max-width: 700px) 100vw, 640px&quot;
-  width=&quot;1200&quot; height=&quot;1697&quot;
-  alt=&quot;Осмысленное описание картинки&quot;
-  decoding=&quot;async&quot;
-  style=&quot;background-image:url('data:image/webp;base64,…');
-         background-size:cover&quot;&gt;</code></pre>
+<pre><code>&lt;div class=&quot;ph-frame&quot; style=&quot;--ph:url('data:image/webp;base64,…')&quot;&gt;
+  &lt;img
+    src=&quot;photo-1280.webp&quot;
+    srcset=&quot;photo-320.webp   320w,
+            photo-640.webp   640w,
+            photo-1280.webp 1280w,
+            photo-2560.webp 2560w&quot;
+    sizes=&quot;(max-width: 700px) 100vw, 640px&quot;
+    width=&quot;1200&quot; height=&quot;1697&quot;
+    alt=&quot;Осмысленное описание картинки&quot;
+    decoding=&quot;async&quot;&gt;
+&lt;/div&gt;</code></pre>
 
 <p>Здесь есть всё, что индексируется: настоящий тег <code>&lt;img&gt;</code>, <code>src</code>,
 <code>srcset</code> и <code>alt</code>. Атрибут <code>style</code> для поиска по картинкам — просто оформление,
@@ -779,10 +807,20 @@ li { margin-bottom: 7px; }
 </div>
 
 <div class="note">
-<b>Две ловушки, о которых узнаёшь поздно.</b>
+<b>Четыре ловушки, о которых узнаёшь поздно.</b>
 <ul style="margin:8px 0 0">
+  <li><b>Блюр нужен только растровым вариантам.</b> Доминирующий цвет, «одно число», CSS-градиенты
+      и SVG-сетка гладкие по построению — им <code>filter</code> не нужен, их можно класть фоном
+      прямо на <code>&lt;img&gt;</code>. Отдельный слой требуется лишь там, где растянутый растр:
+      base64 LQIP и декоды хэшей.</li>
+  <li><b>Плавная подмена требует страховки.</b> Если прятать картинку до события <code>load</code>,
+      при SSR ломаются два случая: без JS изображения останутся невидимыми навсегда, а файлы
+      из кеша выстреливают <code>load</code> ДО гидратации, и обработчик к ним уже не применится.
+      Значит по умолчанию картинка должна быть видима, а анимация — включаться только на клиенте
+      и только для тех файлов, что на момент монтирования ещё не пришли.</li>
   <li><b>Прозрачность.</b> У PNG с альфа-каналом фон будет просвечивать сквозь прозрачные места
-      и после загрузки. Для таких изображений плейсхолдер либо не нужен, либо снимается по <code>load</code>.</li>
+      и после загрузки. Для таких изображений плейсхолдер либо не нужен, либо гасится после
+      появления картинки — что и делает плавная подмена.</li>
   <li><b><code>object-fit</code>.</b> Если на картинке стоит <code>object-fit:contain</code>, содержимое
       займёт не всю рамку, а фон растянут на всю — по краям останется размытая полоса.
       Держите <code>background-size</code> согласованным с <code>object-fit</code>.</li>
@@ -800,9 +838,15 @@ li { margin-bottom: 7px; }
   <div class="detail-body">
     <h3>base64 LQIP <span class="bytes">335 B</span> <span class="pct">в 240× меньше</span></h3>
     <p class="dim">WebP 20 px, q40 · рисуется первым пейнтом, без JS</p>
-    <pre><code>&lt;img src=&quot;photo.webp&quot; width=&quot;1200&quot; height=&quot;1697&quot;
-     style=&quot;background-image:url('data:image/webp;base64,UklGRuIAAABXRUJQVlA4INYAA…');
-            background-size:cover&quot;&gt;</code></pre>
+    <pre><code>&lt;div class=&quot;ph-frame&quot; style=&quot;--ph:url('data:image/webp;base64,UklGRuIAAABXRUJQV…')&quot;&gt;
+  &lt;img src=&quot;photo.webp&quot; width=&quot;1200&quot; height=&quot;1697&quot; alt=&quot;Описание&quot;&gt;
+&lt;/div&gt;
+
+.ph-frame         { position:relative; overflow:hidden; }
+.ph-frame::before { content:''; position:absolute; inset:0;
+                    background:var(--ph) center/cover;
+                    filter:blur(12px); transform:scale(1.15); }
+.ph-frame img     { position:relative; z-index:1; width:100%; object-fit:cover; }</code></pre>
   </div>
 </section>
 <section class="detail">
