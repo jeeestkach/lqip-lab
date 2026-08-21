@@ -23,7 +23,10 @@ export function useQueryParam<T extends string | number>(key: string, fallback: 
       return (Number.isFinite(parsed) ? parsed : fallback) as T;
     },
     set(value) {
-      router.push({ query: { ...route.query, [key]: String(value) } });
+      // replace, а не push: подкрутка параметров демки не должна набивать
+      // историю браузера — иначе «назад» уводит не со страницы, а на шаг настройки.
+      // Прокрутка при этом сохраняется, см. app/router.options.ts.
+      router.replace({ query: { ...route.query, [key]: String(value) } });
     },
   });
 }
