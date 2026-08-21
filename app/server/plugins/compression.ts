@@ -1,24 +1,41 @@
 /**
- * Сжатие ответов SSR.
+ * Сжатие ответов сервера.
  *
- * Nitro в пресете node-server отдаёт HTML БЕЗ сжатия: подразумевается, что
- * впереди стоит nginx или CDN. Для локальных замеров это критично и искажает
- * сравнение — серверный рендер платит за свой документ полную цену, тогда как
- * в реальном развёртывании он приехал бы втрое меньше. Замер до правки:
- * 67 КБ без сжатия против 22,7 КБ в gzip.
+ * Nitro в пресете `node-server` не сжимает НИЧЕГО: подразумевается, что впереди
+ * стоит nginx или CDN. Локально этого нет, и замеры искажаются — причём не только
+ * по HTML. Ответы API тоже текстовые и жмутся втрое: 15,1 КБ → 4,5 КБ.
  *
- * Статику Nitro жмёт отдельно (`compressPublicAssets`), здесь — только
- * динамические ответы.
+ * Статику Nitro жмёт на сборке (`compressPublicAssets`), здесь — динамика.
  */
 
 import { useCompression } from 'h3-compression';
 
+/** Типы, которые имеет смысл жать. Изображения уже сжаты своими кодеками. */
+const COMPRESSIBLE = ['text/html', 'application/json', 'text/plain'];
+
+/** Ниже этого порога заголовки сжатия стоят дороже выигрыша. */
+const MIN_BYTES = 1024;
+
+/** Стоит ли жать этот ответ. */
+function shouldCompress(type: string, body: unknown): boolean {
+  if (!COMPRESSIBLE.some((t) => type.includes(t))) return false;
+  const text = typeof body === 'string' ? body : JSON.stringify(body ?? '');
+  return text.length >= MIN_BYTES;
+}
+
 export default defineNitroPlugin((nitro) => {
+  // Страницы, отрисованные сервером.
   nitro.hooks.hook('render:response', async (response, { event }) => {
-    // Жмём только текст: изображения уже сжаты своими кодеками, повторное
-    // сжатие лишь тратит процессор и ничего не выигрывает.
     const type = String(response.headers?.['content-type'] ?? '');
-    if (!type.includes('text/html')) return;
+    if (!shouldCompress(type, response.body)) return;
     await useCompression(event, response);
+  });
+
+  // Ответы API идут мимо `render:response`, им нужен отдельный перехват.
+  nitro.hooks.hook('beforeResponse', async (event, response) => {
+    if (getResponseHeader(event, 'content-encoding')) return;
+    const type = String(getResponseHeader(event, 'content-type') ?? '');
+    if (!shouldCompress(type, response.body)) return;
+    await useCompression(event, response as { body?: unknown; headers?: Record<string, string> });
   });
 });

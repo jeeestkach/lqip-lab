@@ -34,6 +34,7 @@ export function toPublic(
   record: ImageRecord,
   storage: { url(key: string): string },
   phWidth?: string,
+  full = true,
 ) {
   const sorted = [...record.variants].sort((a, b) => a.width - b.width);
   const chosen = phWidth && record.placeholders[phWidth] ? phWidth : String(DEFAULT_PLACEHOLDER_WIDTH);
@@ -55,17 +56,30 @@ export function toPublic(
           ),
         }
       : {}),
-    original: { url: storage.url(record.originalKey), bytes: record.originalBytes },
     variants: sorted.map((v) => ({
       width: v.width,
       height: v.height,
-      format: v.format,
       bytes: v.bytes,
       url: storage.url(v.key),
     })),
-    srcset: sorted.map((v) => `${storage.url(v.key)} ${v.width}w`).join(', '),
-    timings: record.timings,
-    createdAt: record.createdAt,
+
+    /*
+     * Всё, что ниже, в список каталога НЕ уезжает.
+     *
+     * `srcset` — чистое дублирование: он целиком собирается из `variants`,
+     *   а весил 2,4 КБ из 15,1 КБ ответа. Пусть его собирает клиент.
+     * `original` — каталогу не нужен: там показывается копия 300 px.
+     * `timings` — отладочные данные, место которым на странице загрузки.
+     * `format` у вариантов — всегда webp, повторять его в каждом объекте незачем.
+     */
+    ...(full
+      ? {
+          original: { url: storage.url(record.originalKey), bytes: record.originalBytes },
+          srcset: sorted.map((v) => `${storage.url(v.key)} ${v.width}w`).join(', '),
+          timings: record.timings,
+          createdAt: record.createdAt,
+        }
+      : {}),
   };
 }
 

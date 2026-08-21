@@ -11,7 +11,9 @@
 /** Задержка отдачи файлов, мс. Живёт в адресе — см. composables/useQueryParam.ts. */
 const delay = useQueryParam('delay', 0);
 
-const { data, refresh } = await useFetch('/api/images', { query: { ph: '20' } });
+const { data, refresh } = await // Каталог демки показывает подробности записи, поэтому просит полный ответ.
+  // Боевому списку это не нужно — там короткая форма, см. server/api/images/index.get.ts.
+  useFetch('/api/images', { query: { ph: '20', full: '1' } });
 
 useHead({ title: 'Каталог — демка загрузки изображений' });
 
