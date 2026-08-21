@@ -27,10 +27,34 @@ const params = useDemoParams();
 // что вернул эндпоинт: все четыре ширины плейсхолдера вместо одной нужной,
 // все варианты размеров, тайминги обработки. Замер показал, что на этом
 // уходило 23 КБ из 39 КБ payload — три четверти впустую.
+/**
+ * Блок стилей с плейсхолдерами. Собирается на сервере и НЕ попадает в payload.
+ *
+ * Плейсхолдеры нужны только для отрисовки: размытие рисует CSS, и клиенту
+ * после гидратации сами строки не нужны ни для чего. Замер показал, что в
+ * payload они занимали 3,9 КБ мёртвым грузом.
+ */
+let placeholderCss = '';
+
 const { data: cards } = await useFetch('/api/images', {
   query: { ph: params.ph },
-  transform: (d: any) => buildCards(d?.images, params),
+  transform: (d: any) => {
+    const built = buildCards(d?.images, params);
+    // Собираем стили ДО того, как выбросить плейсхолдеры из данных.
+    if (import.meta.server) placeholderCss = buildPlaceholderCss(built);
+    // Клиенту уезжают карточки БЕЗ плейсхолдеров — только ключ правила.
+    return built.map(({ placeholder, ...rest }: any) => rest);
+  },
 });
+
+/*
+ * `useServerHead`, а не `useHead`: серверный вариант не переносит содержимое
+ * в payload и не пытается применить его повторно на клиенте. Ровно то, что
+ * нужно — стили должны приехать в документе и там остаться.
+ */
+if (placeholderCss) {
+  useServerHead({ style: [{ innerHTML: placeholderCss }] });
+}
 
 const loader = useSequentialImages();
 

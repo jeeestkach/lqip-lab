@@ -14,7 +14,8 @@ interface Card {
   title: string;
   width: number;
   height: number;
-  placeholder: string;
+  /** Ключ правила с плейсхолдером в общем блоке стилей. */
+  phKey: string;
   price: number;
 }
 
@@ -30,13 +31,19 @@ defineProps<{
 <template>
   <div class="dgrid">
     <article v-for="card in cards" :key="card.key" class="dcard">
+      <!--
+        Плейсхолдер подключается КЛАССОМ, а не инлайновым стилем.
+        Инлайн повторял бы один и тот же data URI в каждой карточке: при 14
+        уникальных изображениях и 42 карточках это 8 КБ чистой переплаты
+        за повтор. Класс ссылается на одно правило в общем блоке стилей.
+      -->
       <div
         class="dcard-media"
-        :class="{ 'has-ph': withPlaceholder, 'is-loaded': loaded.has(card.key) }"
-        :style="{
-          aspectRatio: `${card.width} / ${card.height}`,
-          ...(withPlaceholder ? { '--ph': `url(${card.placeholder})` } : {}),
-        }"
+        :class="[
+          withPlaceholder ? ['has-ph', `ph-${card.phKey}`] : [],
+          { 'is-loaded': loaded.has(card.key) },
+        ]"
+        :style="{ aspectRatio: `${card.width} / ${card.height}` }"
       >
         <img
           v-if="loaded.has(card.key)"

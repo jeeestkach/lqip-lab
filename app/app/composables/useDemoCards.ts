@@ -29,6 +29,24 @@ export function useDemoParams(): DemoParams {
 }
 
 /**
+ * Собирает блок стилей с плейсхолдерами — по одному правилу на изображение.
+ *
+ * Карточек может быть сколько угодно, изображений — ограниченное число.
+ * Правило `.ph-<id>` подключается классом, поэтому один data URI обслуживает
+ * все повторы, а не копируется в каждый инлайновый стиль.
+ *
+ * @param cards Карточки с полем `placeholder`.
+ * @returns Текст CSS, пригодный для вставки в `<style>`.
+ */
+export function buildPlaceholderCss(cards: { phKey: string; placeholder: string }[]): string {
+  const seen = new Map<string, string>();
+  for (const c of cards) {
+    if (c.placeholder && !seen.has(c.phKey)) seen.set(c.phKey, c.placeholder);
+  }
+  return [...seen].map(([id, ph]) => `.ph-${id}{--ph:url(${ph})}`).join('');
+}
+
+/**
  * Разворачивает записи API в карточки товара.
  * @param images Записи из `/api/images`.
  * @param params Параметры демонстрации.
@@ -47,6 +65,8 @@ export function buildCards(images: any[] | undefined, params: DemoParams) {
       height: src.height,
       // Ширину выбрал сервер по параметру `ph` — лишних сюда не приходит.
       placeholder: src.placeholder,
+      /** Ключ правила в блоке стилей: один на изображение, а не на карточку. */
+      phKey: src.id,
       price: 350 + i * 37,
       url: `${variant.url}?speed=${params.speed}`,
       bytes: variant.bytes,
