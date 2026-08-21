@@ -1,13 +1,27 @@
 /**
  * GET /cdn/** — отдача объектов из хранилища.
  *
- * Играет роль CDN для локальной демки. Заголовки кеширования выставлены как
- * у настоящего CDN: содержимое адресуется хешем, поэтому ключ никогда не меняет
- * содержимое, и `immutable` здесь честен, а не оптимистичен.
+ * Играет роль CDN для локальной демки. Содержимое адресуется хешем, поэтому под
+ * одним ключом никогда не окажется других байтов — `immutable` здесь честен.
  *
- * Опциональный `?delay=<мс>` притормаживает ответ — им демка показывает
- * ступени загрузки на медленном соединении, не трогая троттлинг DevTools.
+ * `?speed=<профиль>` притормаживает ответ ровно на столько, сколько файл ехал бы
+ * по такому каналу: задержка сети плюс размер, делённый на полосу. Это НЕ то же,
+ * что фиксированная пауза: тяжёлый файл ждёт дольше лёгкого, и картинки приходят
+ * неровно — как в жизни. Пропускная способность считается на файл, а не на весь
+ * канал; порядком и параллельностью управляет клиент.
  */
+
+import { findSpeed, transferMs } from '../../../shared/speeds';
+
+/** MIME по расширению ключа. */
+const TYPES: Record<string, string> = {
+  webp: 'image/webp',
+  jpg: 'image/jpeg',
+  jpeg: 'image/jpeg',
+  png: 'image/png',
+  avif: 'image/avif',
+  gif: 'image/gif',
+};
 
 export default defineEventHandler(async (event) => {
   const segments = getRouterParam(event, 'path');
@@ -22,35 +36,26 @@ export default defineEventHandler(async (event) => {
     throw createError({ statusCode: 404, statusMessage: 'объект не найден' });
   }
 
-  const delay = Number.parseInt(String(getQuery(event).delay ?? ''), 10);
-  const throttled = Number.isFinite(delay) && delay > 0;
-  if (throttled) {
-    await new Promise((resolve) => setTimeout(resolve, Math.min(delay, 30_000)));
+  const speed = findSpeed(String(getQuery(event).speed ?? ''));
+  const wait = transferMs(body.length, speed);
+  if (wait > 0) {
+    await new Promise((resolve) => setTimeout(resolve, Math.min(wait, 60_000)));
   }
 
   const ext = segments.split('.').pop()?.toLowerCase() ?? '';
-  const types: Record<string, string> = {
-    webp: 'image/webp',
-    jpg: 'image/jpeg',
-    jpeg: 'image/jpeg',
-    png: 'image/png',
-    avif: 'image/avif',
-    gif: 'image/gif',
-  };
+  setResponseHeader(event, 'content-type', TYPES[ext] ?? 'application/octet-stream');
 
-  setResponseHeader(event, 'content-type', types[ext] ?? 'application/octet-stream');
-
-  // Обычный ответ кешируется навсегда: ключ объекта это хеш содержимого,
-  // поэтому под одним URL никогда не окажется других байтов, и `immutable` честен.
-  //
-  // Но замедленный ответ кешировать НЕЛЬЗЯ: `?delay=` входит в ключ кеша, и после
+  // Замедленный ответ кешировать НЕЛЬЗЯ: `?speed=` входит в ключ кеша, и после
   // первого запроса браузер отдавал бы «медленный» URL мгновенно из кеша —
-  // демонстрация ступеней сломалась бы после первого же показа.
+  // повторный прогон демонстрации сломался бы.
   setResponseHeader(
     event,
     'cache-control',
-    throttled ? 'no-store' : 'public, max-age=31536000, immutable',
+    wait > 0 ? 'no-store' : 'public, max-age=31536000, immutable',
   );
   setResponseHeader(event, 'content-length', body.length);
+  // Чтобы клиент мог показать, сколько реально приехало байт.
+  setResponseHeader(event, 'x-transfer-ms', String(wait));
+
   return body;
 });

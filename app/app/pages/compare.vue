@@ -1,131 +1,78 @@
 <script setup lang="ts">
 /**
- * Контролируемое сравнение двух стратегий рендера на ОДНИХ И ТЕХ ЖЕ изображениях.
+ * Сравнение двух стратегий рендера — двумя НАСТОЯЩИМИ загрузками страницы.
  *
- * Почему так, а не «наш localhost против живого сайта»: там не совпадают ни сервер,
- * ни латентность, ни CDN, и любой результат объяснялся бы этими различиями,
- * а не стратегией рендера. Здесь одна страница, один прогон, одна очередь —
- * отличается ровно одно: есть плейсхолдер или нет.
+ * Слева и справа — не два блока одной страницы, а два независимых документа
+ * в iframe: `/demo/csr` и `/demo/ssr`. Это принципиально: клиентская стратегия
+ * должна честно пройти весь свой путь — получить пустой HTML, скачать и
+ * исполнить JS, сходить за данными и только потом отрисовать карточки.
+ * Внутри одной страницы это не воспроизвести, там данные уже есть.
  *
- * Слева — как сейчас: пустое место до прихода файла.
- * Справа — плейсхолдер приезжает в HTML и виден первым пейнтом.
- *
- * Момент прихода каждого файла считает модель общей полосы (useLoadSimulator),
- * а не фиксированная задержка: тяжёлая картинка ждёт дольше лёгкой, и карточки
- * появляются неровными пачками — ровно как на настоящем каталоге.
+ * Кнопка перезапускает оба кадра одновременно, перезагружая их адреса,
+ * поэтому оба стартуют с первой миллисекунды и в равных условиях.
  */
 
-import { SPEEDS } from '~/composables/useLoadSimulator';
+import { SPEEDS } from '~~/shared/speeds';
 
-const { data } = await useFetch('/api/images');
+useHead({ title: 'Сравнение стратегий рендера' });
 
-useHead({ title: 'Сравнение стратегий — демка загрузки изображений' });
+const speed = useQueryParam('speed', 'slow4g');
+const ph = useQueryParam('ph', '20');
+const repeat = useQueryParam('repeat', 3);
+const concurrency = useQueryParam('concurrency', 1);
 
-/** Профиль соединения. */
-const speedKey = useQueryParam('speed', 'slow4g');
-const speed = computed(() => SPEEDS.find((s) => s.key === speedKey.value) ?? SPEEDS[1]!);
+/** Счётчик перезапусков: меняясь, он пересоздаёт оба iframe. */
+const runId = ref(0);
 
-/** Ширина плейсхолдера. Все варианты уже посчитаны при загрузке. */
-const phWidth = useQueryParam('ph', '20');
-
-/** Сколько карточек грузится в первую очередь — предзагрузка вперёд экрана. */
-const preload = useQueryParam('preload', 6);
-
-/** Сколько раз повторить набор, чтобы сетке было куда скроллить. */
-const repeat = useQueryParam('repeat', 4);
-
-const items = computed(() => {
-  const base = data.value?.images ?? [];
-  if (!base.length) return [];
-  return Array.from({ length: base.length * repeat.value }, (_, i) => {
-    const src = base[i % base.length]!;
-    return { ...src, key: `${src.id}-${i}`, index: i };
-  });
-});
-
-const fmt = (n: number) => (n < 1024 ? `${n} B` : `${(n / 1024).toFixed(1)} КБ`);
-const fmtMs = (ms: number) => (ms >= 1000 ? `${(ms / 1000).toFixed(1).replace('.', ',')} с` : `${ms} мс`);
-
-/** Плейсхолдер выбранной ширины. */
-function ph(img: any): string {
-  return img.placeholders?.[phWidth.value] ?? img.placeholder;
-}
-
-/** Карточная копия — то, что реально грузится в выдаче. */
-function variant(img: any) {
-  return img.variants.find((v: any) => v.width >= 300) ?? img.variants[0];
-}
-
-const phWeight = computed(() => items.value.reduce((s, i) => s + ph(i).length, 0));
-const imageWeight = computed(() => items.value.reduce((s, i) => s + variant(i).bytes, 0));
-
-// ——— прогон ———
-
-const sim = useLoadSimulator();
-
-/** Прогрев: тянем файлы в кеш, чтобы прогон измерял модель, а не сеть. */
-const warming = ref(false);
-const warmed = ref(false);
-
-async function warmCache() {
-  if (warmed.value || !items.value.length) return;
-  warming.value = true;
-  const urls = [...new Set(items.value.map((i) => variant(i).url))];
-  await Promise.all(urls.map((u) => fetch(u).catch(() => undefined)));
-  warming.value = false;
-  warmed.value = true;
-}
-
-/**
- * Порядок загрузки: сначала предзагружаемые карточки, потом остальные.
- * Это и есть «предзагрузка вперёд экрана» — она меняет очередь, а не скорость.
- */
-const queue = computed(() =>
-  [...items.value]
-    .sort((a, b) => {
-      const ap = a.index < preload.value ? 0 : 1;
-      const bp = b.index < preload.value ? 0 : 1;
-      return ap - bp || a.index - b.index;
-    })
-    .map((i) => ({ key: i.key, bytes: variant(i).bytes })),
+const query = computed(
+  () => `speed=${speed.value}&ph=${ph.value}&repeat=${repeat.value}&concurrency=${concurrency.value}&r=${runId.value}`,
 );
 
-async function restart() {
-  await warmCache();
-  window.scrollTo({ top: 0, behavior: 'instant' as ScrollBehavior });
-  sim.start(queue.value, speed.value);
+/** Живая статистика каждого кадра. */
+const stats = reactive<Record<string, { done: number; total: number; elapsed: number; bytes: number; fetching?: boolean }>>({
+  csr: { done: 0, total: 0, elapsed: 0, bytes: 0 },
+  ssr: { done: 0, total: 0, elapsed: 0, bytes: 0 },
+});
+
+function onMessage(e: MessageEvent) {
+  const d = e.data;
+  if (d?.type === 'demo:progress' && d.strategy in stats) {
+    stats[d.strategy] = {
+      done: d.done, total: d.total, elapsed: d.elapsed, bytes: d.bytes, fetching: d.fetching,
+    };
+  }
 }
 
-/** Показывать ли настоящий файл этой карточки. */
-function isArrived(key: string): boolean {
-  return sim.arrived.value.has(key);
+onMounted(() => window.addEventListener('message', onMessage));
+onBeforeUnmount(() => window.removeEventListener('message', onMessage));
+
+/** Перезапускает оба кадра: пересоздание iframe = настоящая новая загрузка. */
+function restart() {
+  stats.csr = { done: 0, total: 0, elapsed: 0, bytes: 0 };
+  stats.ssr = { done: 0, total: 0, elapsed: 0, bytes: 0 };
+  runId.value += 1;
 }
 
-/** Прогон не запускается сам: демонстрация должна начинаться по команде. */
-onMounted(() => { warmCache(); });
+const fmt = (n: number) => (n < 1024 ? `${n} B` : n < 1024 * 1024 ? `${(n / 1024).toFixed(1)} КБ` : `${(n / 1048576).toFixed(2)} МБ`);
+const fmtMs = (ms: number) => (ms >= 1000 ? `${(ms / 1000).toFixed(1).replace('.', ',')} с` : `${ms} мс`);
 </script>
 
 <template>
   <div class="cmp">
     <div class="cmp-bar">
-      <div class="cmp-bar-row">
-        <button :disabled="warming" @click="restart()">
-          {{ warming ? 'Прогрев…' : 'С начала' }}
-        </button>
-        <button v-if="sim.running.value" class="ghost" @click="sim.stop()">Стоп</button>
+      <div class="cmp-row">
+        <button @click="restart()">С начала</button>
 
         <label>
           скорость
-          <select v-model="speedKey">
-            <option v-for="s in SPEEDS" :key="s.key" :value="s.key">
-              {{ s.label }} — {{ s.hint }}
-            </option>
+          <select v-model="speed">
+            <option v-for="s in SPEEDS" :key="s.key" :value="s.key">{{ s.label }} — {{ s.hint }}</option>
           </select>
         </label>
 
         <label>
           плейсхолдер
-          <select v-model="phWidth">
+          <select v-model="ph">
             <option value="12">12 px</option>
             <option value="20">20 px</option>
             <option value="32">32 px</option>
@@ -134,11 +81,11 @@ onMounted(() => { warmCache(); });
         </label>
 
         <label>
-          предзагрузка
-          <select v-model.number="preload">
-            <option :value="0">нет</option>
-            <option :value="6">6 карточек</option>
-            <option :value="18">18 карточек</option>
+          порядок
+          <select v-model.number="concurrency">
+            <option :value="1">строго по очереди</option>
+            <option :value="3">по 3 сразу</option>
+            <option :value="6">по 6 — как браузер</option>
           </select>
         </label>
 
@@ -146,194 +93,97 @@ onMounted(() => { warmCache(); });
           карточек
           <select v-model.number="repeat">
             <option :value="1">14</option>
-            <option :value="4">56</option>
-            <option :value="8">112</option>
+            <option :value="3">42</option>
+            <option :value="6">84</option>
           </select>
         </label>
-      </div>
 
-      <div class="cmp-bar-row cmp-bar-stats">
-        <span v-if="sim.total.value">
-          пришло <b>{{ sim.arrived.value.size }}</b> из <b>{{ sim.total.value }}</b>
-        </span>
-        <span v-if="sim.total.value">прошло <b>{{ fmtMs(sim.elapsed.value) }}</b></span>
-        <span v-if="sim.eta.value">все придут за <b>{{ fmtMs(sim.eta.value) }}</b></span>
-        <span class="cmp-sep" />
-        <span>картинок на <b>{{ fmt(imageWeight) }}</b></span>
-        <span>плейсхолдеры {{ phWidth }} px — <b>{{ fmt(phWeight) }}</b> в HTML</span>
-      </div>
-
-      <div v-if="sim.total.value" class="cmp-progress">
-        <i :style="{ width: `${(sim.arrived.value.size / sim.total.value) * 100}%` }" />
+        <span class="dim hint">параметры применяются кнопкой «С начала»</span>
       </div>
     </div>
 
-    <div class="cmp-body">
-      <p class="dim intro">
-        Момент прихода каждой карточки считается по весу файла и выбранной скорости,
-        с учётом того, что браузер держит к источнику шесть соединений и они делят полосу.
-        Поэтому карточки появляются неровными пачками — как на настоящем каталоге.
-        Обе колонки идут по одной очереди: отличается только то, что видно до прихода файла.
-      </p>
+    <div class="ab">
+      <section class="pane">
+        <header class="pane-head pane-bad">
+          <b>Только клиентский рендер</b>
+          <span class="pane-stat">
+            <template v-if="stats.csr.fetching">запрашивает список…</template>
+            <template v-else-if="stats.csr.total">
+              {{ stats.csr.done }} / {{ stats.csr.total }} · {{ fmtMs(stats.csr.elapsed) }} · {{ fmt(stats.csr.bytes) }}
+            </template>
+            <template v-else>ждёт JS</template>
+          </span>
+        </header>
+        <iframe :key="`csr-${runId}`" :src="`/demo/csr?${query}`" title="Клиентский рендер" />
+      </section>
 
-      <div v-if="!items.length" class="note">
-        Пусто. <NuxtLink to="/upload">Загрузите изображения</NuxtLink>, чтобы сравнить.
-      </div>
+      <section class="pane">
+        <header class="pane-head pane-good">
+          <b>SSR с плейсхолдерами</b>
+          <span class="pane-stat">
+            <template v-if="stats.ssr.total">
+              {{ stats.ssr.done }} / {{ stats.ssr.total }} · {{ fmtMs(stats.ssr.elapsed) }} · {{ fmt(stats.ssr.bytes) }}
+            </template>
+            <template v-else>готов</template>
+          </span>
+        </header>
+        <iframe :key="`ssr-${runId}`" :src="`/demo/ssr?${query}`" title="SSR с плейсхолдерами" />
+      </section>
+    </div>
 
-      <div v-else class="ab">
-        <section>
-          <h2 class="ab-head ab-head-bad">Без плейсхолдера — как сейчас</h2>
-          <div class="ab-grid">
-            <article v-for="img in items" :key="`a-${img.key}`" class="pcard">
-              <div class="pcard-media" :style="{ aspectRatio: `${img.width} / ${img.height}` }">
-                <img
-                  v-if="isArrived(img.key)"
-                  :src="variant(img).url"
-                  :alt="img.title"
-                  :width="img.width"
-                  :height="img.height"
-                  decoding="async"
-                >
-              </div>
-              <div class="pcard-body">
-                <div class="pcard-title">{{ img.title }}</div>
-                <div class="pcard-price">{{ 350 + img.index * 37 }} ₽</div>
-              </div>
-            </article>
-          </div>
-        </section>
-
-        <section>
-          <h2 class="ab-head ab-head-good">С плейсхолдером в HTML</h2>
-          <div class="ab-grid">
-            <article v-for="img in items" :key="`b-${img.key}`" class="pcard">
-              <div
-                class="pcard-media has-ph is-fading"
-                :class="{ 'is-loaded': isArrived(img.key) }"
-                :style="{ aspectRatio: `${img.width} / ${img.height}`, '--ph': `url(${ph(img)})` }"
-              >
-                <img
-                  v-if="isArrived(img.key)"
-                  :src="variant(img).url"
-                  :alt="img.title"
-                  :width="img.width"
-                  :height="img.height"
-                  decoding="async"
-                >
-              </div>
-              <div class="pcard-body">
-                <div class="pcard-title">{{ img.title }}</div>
-                <div class="pcard-price">{{ 350 + img.index * 37 }} ₽</div>
-              </div>
-            </article>
-          </div>
-        </section>
-      </div>
-
-      <div class="note" style="margin-top:28px">
-        <b>Откуда взяты изображения и цифры.</b> В сетке — настоящие карточки с
-        <code>cdn.provybor.com</code>, те же файлы <code>_md.webp</code>, что отдаёт живой каталог.
-        Замер там же, режим Slow 4G, страница <code>/catalog?delivery_methods=OZON</code>:
-        <b>30</b> изображений на выдаче, медиана загрузки одной карточки <b>1778 мс</b>,
-        максимум <b>3575 мс</b>; в момент скролла <b>8 из 20</b> карточек в области экрана
-        были без изображения; плейсхолдера нет ни у одной из <b>36</b> картинок.
-        <br><br>
-        Отдельно стоит сказать: сайт <i>уже</i> делает многое правильно — WebP и размерные
-        варианты (<code>_sm</code>, <code>_md</code>) на месте. Недостающее звено ровно одно —
-        плейсхолдер.
+    <div class="cmp-notes">
+      <div class="note">
+        <b>Это два разных документа, а не два блока одной страницы.</b>
+        Слева браузер получает пустую оболочку, качает и исполняет JS, запрашивает
+        <code>/api/images</code> и только потом рисует карточки. Справа карточки,
+        размеры и размытые плейсхолдеры приезжают уже в HTML — показывать есть что
+        с первого пейнта. Открыть по отдельности:
+        <NuxtLink :to="`/demo/csr?${query}`" target="_blank">клиентский</NuxtLink> ·
+        <NuxtLink :to="`/demo/ssr?${query}`" target="_blank">серверный</NuxtLink>.
       </div>
 
       <div class="note">
-        <b>Что тут честно, а что нет.</b> Время прихода считает модель, а не сеть: файлы
-        заранее прогреты в кеш, чтобы прогон был точным и повторяемым. Модель упрощает —
-        полоса делится поровну, накладные расходы TLS и HTTP/2-мультиплексирование не учтены.
-        Зато обе колонки идут по одной и той же очереди, поэтому разница между ними
-        объясняется только наличием плейсхолдера, и ничем больше.
+        <b>Как загружаются картинки.</b> Порядком управляет JS: файлы берутся
+        <code>fetch</code>'ем по очереди, слева направо и сверху вниз, а показываются
+        через <code>createObjectURL</code>. Не «прогрев кеша с последующей подстановкой
+        <code>src</code>»: тот приём ломается на некешируемых ответах, а замедленные
+        ответы обязаны быть <code>no-store</code>, иначе повторный прогон стал бы
+        мгновенным. Перед снятием блюра ждём <code>img.decode()</code>, чтобы подмена
+        не давала рывка.
+        <br><br>
+        Сервер притормаживает каждый файл ровно на столько, сколько он ехал бы
+        по выбранному каналу: задержка сети плюс размер, делённый на полосу.
+        Тяжёлая картинка ждёт дольше лёгкой — в этом отличие от фиксированной паузы.
       </div>
     </div>
   </div>
 </template>
 
 <style scoped>
-/* Панель приклеена под навигацией: параметры меняются на ходу,
-   и ради них не должно приходиться скроллить наверх. */
 .cmp-bar {
-  position: sticky;
-  top: 57px;
-  z-index: 8;
-  background: var(--bg);
-  border-bottom: 1px solid var(--line);
-  padding: 12px 20px 0;
+  position: sticky; top: 57px; z-index: 8;
+  background: var(--bg); border-bottom: 1px solid var(--line);
+  padding: 12px 20px;
 }
-.cmp-bar-row { display: flex; align-items: center; gap: 14px; flex-wrap: wrap; }
-.cmp-bar-stats { font-size: 13px; color: var(--dim); padding: 9px 0; }
-.cmp-bar-stats b { color: var(--fg); font-family: ui-monospace, Menlo, monospace; }
-.cmp-sep { flex: 1 1 auto; }
+.cmp-row { display: flex; align-items: center; gap: 14px; flex-wrap: wrap; }
+.hint { font-size: 13px; }
 
-.cmp-progress { height: 3px; background: var(--line); margin: 0 -20px; }
-.cmp-progress i { display: block; height: 100%; background: var(--rec); transition: width .12s linear; }
-
-.cmp-body { max-width: 1500px; margin: 0 auto; padding: 22px 20px 80px; }
-.intro { max-width: 90ch; }
-
-.ab { display: grid; grid-template-columns: 1fr 1fr; gap: 26px; margin-top: 20px; align-items: start; }
-.ab-head {
-  margin: 0 0 12px; font-size: 15px; padding: 8px 12px; border-radius: 8px;
-  position: sticky; top: 176px; z-index: 5;
+.ab { display: grid; grid-template-columns: 1fr 1fr; gap: 18px; padding: 18px 20px 0; }
+.pane { border: 1px solid var(--line); border-radius: 12px; overflow: hidden; display: flex; flex-direction: column; }
+.pane-head {
+  display: flex; align-items: baseline; justify-content: space-between; gap: 12px;
+  padding: 9px 14px; font-size: 14px;
 }
-.ab-head-bad { background: color-mix(in oklab, #d97706 16%, var(--bg)); }
-.ab-head-good { background: color-mix(in oklab, var(--rec) 16%, var(--bg)); }
+.pane-bad { background: color-mix(in oklab, #d97706 16%, var(--bg)); }
+.pane-good { background: color-mix(in oklab, var(--rec) 16%, var(--bg)); }
+.pane-stat { font-family: ui-monospace, Menlo, monospace; font-size: 12px; color: var(--dim); }
 
-.ab-grid { display: grid; grid-template-columns: repeat(3, 1fr); gap: 12px; }
+iframe { width: 100%; height: 68vh; border: 0; background: var(--bg); display: block; }
 
-.pcard { border: 1px solid var(--line); border-radius: 10px; overflow: hidden; background: var(--panel); }
-.pcard-media { position: relative; overflow: hidden; background: var(--bg); }
-.pcard-media img {
-  display: block; width: 100%; height: 100%; object-fit: cover;
-  position: relative; z-index: 1;
-}
-.pcard-body { padding: 8px 10px 10px; }
-.pcard-title { font-size: 12px; line-height: 1.3; height: 2.6em; overflow: hidden; }
-.pcard-price { font-size: 13px; font-weight: 700; margin-top: 4px;
-  font-family: ui-monospace, Menlo, monospace; }
-
-/**
- * Плейсхолдер отдельным слоем, а не фоном на самом <img>.
- *
- * Фоном на теге он остаётся резко-квадратным: браузер растягивает 20 пикселей
- * до двухсот билинейной интерполяцией, а она сглаживает только соседние пиксели
- * и на десятикратном увеличении даёт мягкие квадраты, а не размытие.
- * Настоящий блюр даёт filter, но повесить его на <img> нельзя — он размоет
- * и загруженную картинку тоже.
- */
-.pcard-media.has-ph::before {
-  content: '';
-  position: absolute;
-  inset: 0;
-  background-image: var(--ph);
-  background-size: cover;
-  background-position: center;
-  filter: blur(10px);
-  /* Блюр размывает и края — увеличиваем, чтобы кайма ушла за overflow: hidden. */
-  transform: scale(1.15);
-}
-
-/* Плавная подмена: картинка проявляется поверх слоя, и только став непрозрачной,
-   слой гаснет. Одновременное гашение дало бы вспышку — в середине перехода оба
-   полупрозрачны и сквозь них просвечивает фон. */
-.pcard-media.is-fading img { animation: appear .45s ease both; }
-.pcard-media.is-fading.is-loaded::before { opacity: 0; transition: opacity .3s ease .45s; }
-
-@keyframes appear { from { opacity: 0 } to { opacity: 1 } }
-
-@media (prefers-reduced-motion: reduce) {
-  .pcard-media.is-fading img { animation: none; }
-  .pcard-media.is-fading.is-loaded::before { transition: none; }
-}
+.cmp-notes { padding: 4px 20px 70px; max-width: 1500px; }
 
 @media (max-width: 1000px) {
   .ab { grid-template-columns: 1fr; }
-  .ab-grid { grid-template-columns: repeat(2, 1fr); }
-  .ab-head { top: 210px; }
+  iframe { height: 52vh; }
 }
 </style>

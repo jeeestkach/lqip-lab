@@ -1,16 +1,13 @@
 <script setup lang="ts">
-/** Оболочка приложения: навигация и слот страницы. */
+/**
+ * Корень приложения. Намеренно пустой: вся оболочка живёт в `layouts/default.vue`,
+ * чтобы демо-страницы могли отказаться от неё через `definePageMeta({ layout: false })`.
+ * Они открываются внутри iframe как самостоятельные документы.
+ */
 </script>
 
 <template>
-  <div>
-    <nav class="topbar">
-      <NuxtLink to="/" class="brand">Демка загрузки изображений</NuxtLink>
-      <NuxtLink to="/compare">Сравнение</NuxtLink>
-      <NuxtLink to="/">Каталог</NuxtLink>
-      <NuxtLink to="/upload">Загрузка</NuxtLink>
-      <NuxtLink to="/why">Зачем это нужно</NuxtLink>
-    </nav>
+  <NuxtLayout>
     <NuxtPage />
-  </div>
+  </NuxtLayout>
 </template>
