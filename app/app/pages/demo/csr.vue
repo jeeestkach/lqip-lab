@@ -34,46 +34,55 @@ function run() {
 // иначе стратегия перестала бы быть честной.
 watch(cards, (list) => { if (list.length) run(); });
 
-onMounted(() => {
-  window.addEventListener('message', (e) => {
-    if (e.data === 'demo:run') {
-      if (cards.value.length) run();
-    }
-    if (e.data === 'demo:stop') loader.stop();
-  });
-  window.parent?.postMessage({ type: 'demo:ready', strategy: 'csr' }, '*');
+const { post, offset } = useDemoFrame({
+  strategy: 'csr',
+  onRun: () => { if (cards.value.length) run(); },
+  onStop: loader.stop,
 });
 
 watch(
   () => [loader.done.value.size, loader.running.value, status.value],
-  () => {
-    window.parent?.postMessage(
-      {
-        type: 'demo:progress',
-        strategy: 'csr',
-        done: loader.done.value.size,
-        total: loader.total.value,
-        elapsed: loader.elapsed.value,
-        bytes: loader.bytes.value,
-        fetching: status.value === 'pending',
-      },
-      '*',
-    );
-  },
+  () => post({
+    type: 'demo:progress',
+    strategy: 'csr',
+    done: loader.done.value.size,
+    total: loader.total.value,
+    elapsed: loader.elapsed.value,
+    bytes: loader.bytes.value,
+    fetching: status.value === 'pending',
+  }),
 );
 </script>
 
 <template>
-  <div class="demo-page">
-    <p v-if="!cards.length" class="demo-empty">
-      {{ status === 'pending' ? 'Запрашиваю список товаров…' : 'Список пуст' }}
-    </p>
+  <div class="demo-viewport">
+    <div class="demo-page" :style="{ transform: `translateY(${-offset}px)` }">
+    <!--
+      Текст намеренно не зависит от статуса запроса: на сервере он ещё 'idle',
+      на клиенте сразу 'pending', и разметка бы разошлась при гидратации.
+      Пока карточек нет — состояние ровно одно, и описывать его надо одинаково.
+    -->
+    <p v-if="!cards.length" class="demo-empty">Запрашиваю список товаров…</p>
     <DemoGrid v-else :cards="cards" :loaded="loader.done.value" :with-placeholder="false" />
+    </div>
   </div>
 </template>
 
-<style>
-.demo-page { padding: 12px; }
+<style scoped>
+/*
+ * Клип делаем ЛОКАЛЬНО, а не через `html, body { overflow: hidden }`:
+ * незакрытый (не scoped) блок стилей утекает в документ родителя и ломает
+ * прокрутку самой страницы сравнения. Фиксированная обёртка занимает ровно
+ * область кадра и обрезает содержимое, не трогая ничего снаружи.
+ *
+ * Страница внутри iframe НЕ прокручивается сама: её сдвигает родитель через
+ * transform. Собственная полоса была бы вторым источником правды.
+ */
+.demo-viewport {
+  position: fixed;
+  inset: 0;
+  overflow: hidden;
+}
+.demo-page { padding: 12px; will-change: transform; }
 .demo-empty { color: var(--dim); font-size: 13px; padding: 20px 4px; }
-body { margin: 0; }
 </style>

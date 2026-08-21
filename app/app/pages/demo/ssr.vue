@@ -29,42 +29,46 @@ function run() {
   );
 }
 
-onMounted(() => {
-  // Родитель может дирижировать прогоном обоих кадров одновременно.
-  window.addEventListener('message', (e) => {
-    if (e.data === 'demo:run') run();
-    if (e.data === 'demo:stop') loader.stop();
-  });
-  window.parent?.postMessage({ type: 'demo:ready', strategy: 'ssr' }, '*');
-  run();
-});
+// Родитель дирижирует прогоном обоих кадров и держит их прокрутку согласованной.
+const { post, offset } = useDemoFrame({ strategy: 'ssr', onRun: run, onStop: loader.stop });
+
+onMounted(run);
 
 watch(
   () => [loader.done.value.size, loader.running.value],
-  () => {
-    window.parent?.postMessage(
-      {
-        type: 'demo:progress',
-        strategy: 'ssr',
-        done: loader.done.value.size,
-        total: loader.total.value,
-        elapsed: loader.elapsed.value,
-        bytes: loader.bytes.value,
-      },
-      '*',
-    );
-  },
+  () => post({
+    type: 'demo:progress',
+    strategy: 'ssr',
+    done: loader.done.value.size,
+    total: loader.total.value,
+    elapsed: loader.elapsed.value,
+    bytes: loader.bytes.value,
+  }),
 );
 </script>
 
 <template>
-  <div class="demo-page">
+  <div class="demo-viewport">
+    <div class="demo-page" :style="{ transform: `translateY(${-offset}px)` }">
     <DemoGrid :cards="cards" :loaded="loader.done.value" :with-placeholder="true" />
+    </div>
   </div>
 </template>
 
-<style>
-/* Страница живёт внутри iframe — свои отступы держим минимальными. */
-.demo-page { padding: 12px; }
-body { margin: 0; }
+<style scoped>
+/*
+ * Клип делаем ЛОКАЛЬНО, а не через `html, body { overflow: hidden }`:
+ * незакрытый (не scoped) блок стилей утекает в документ родителя и ломает
+ * прокрутку самой страницы сравнения. Фиксированная обёртка занимает ровно
+ * область кадра и обрезает содержимое, не трогая ничего снаружи.
+ *
+ * Страница внутри iframe НЕ прокручивается сама: её сдвигает родитель через
+ * transform. Собственная полоса была бы вторым источником правды.
+ */
+.demo-viewport {
+  position: fixed;
+  inset: 0;
+  overflow: hidden;
+}
+.demo-page { padding: 12px; will-change: transform; }
 </style>
