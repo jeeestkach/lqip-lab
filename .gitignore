@@ -1,0 +1,9 @@
+node_modules/
+.DS_Store
+
+# Nuxt-демка
+app/.nuxt/
+app/.output/
+app/.data/
+app/.nitro/
+app/.cache/

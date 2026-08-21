@@ -1,0 +1,1593 @@
+<!doctype html>
+<html lang="ru">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Blur-плейсхолдеры изображений — сравнение техник</title>
+<style>
+@property --lqip {
+  syntax: "<number>";
+  inherits: true;
+  initial-value: 0;
+}
+
+.ph-lqip-int {
+  /* Разворачиваем 20-битное число: сдвиг вправо это деление, маска — mod(). */
+  --_v: calc(var(--lqip) + 524288);
+  --_ca: mod(round(down, calc(var(--_v) / 262144)), 4);
+  --_cb: mod(round(down, calc(var(--_v) / 65536)), 4);
+  --_cc: mod(round(down, calc(var(--_v) / 16384)), 4);
+  --_cd: mod(round(down, calc(var(--_v) / 4096)), 4);
+  --_ce: mod(round(down, calc(var(--_v) / 1024)), 4);
+  --_cf: mod(round(down, calc(var(--_v) / 256)), 4);
+  --_ll: mod(round(down, calc(var(--_v) / 64)), 4);
+  --_aaa: mod(round(down, calc(var(--_v) / 8)), 8);
+  --_bbb: mod(var(--_v), 8);
+
+  /* Цветность общая на всю картинку, меняется только светлота по ячейкам.
+     Диапазон ±0.12 вместо ±0.35 из спецификации — см. комментарий в lqip-format.mjs. */
+  --_a: calc(var(--_aaa) / 8 * 0.24 - 0.12);
+  --_b: calc((var(--_bbb) + 1) / 8 * 0.24 - 0.12);
+
+  /* Первое объявление — запасное, для браузеров без mod()/round()/oklab():
+     там второе объявление невалидно и отбрасывается целиком. */
+  background-color: var(--lqip-fallback, #9a9a9a);
+  background-color: oklab(calc(var(--_ll) / 3 * 0.6 + 0.2) var(--_a) var(--_b));
+  background-image:
+    radial-gradient(50% 75% at 16.67% 25%, oklab(calc(var(--_ca) / 3 * 0.6 + 0.2) var(--_a) var(--_b) / 1) 0%, oklab(calc(var(--_ca) / 3 * 0.6 + 0.2) var(--_a) var(--_b) / 0) 100%),
+    radial-gradient(50% 75% at 50% 25%, oklab(calc(var(--_cb) / 3 * 0.6 + 0.2) var(--_a) var(--_b) / 1) 0%, oklab(calc(var(--_cb) / 3 * 0.6 + 0.2) var(--_a) var(--_b) / 0) 100%),
+    radial-gradient(50% 75% at 83.33% 25%, oklab(calc(var(--_cc) / 3 * 0.6 + 0.2) var(--_a) var(--_b) / 1) 0%, oklab(calc(var(--_cc) / 3 * 0.6 + 0.2) var(--_a) var(--_b) / 0) 100%),
+    radial-gradient(50% 75% at 16.67% 75%, oklab(calc(var(--_cd) / 3 * 0.6 + 0.2) var(--_a) var(--_b) / 1) 0%, oklab(calc(var(--_cd) / 3 * 0.6 + 0.2) var(--_a) var(--_b) / 0) 100%),
+    radial-gradient(50% 75% at 50% 75%, oklab(calc(var(--_ce) / 3 * 0.6 + 0.2) var(--_a) var(--_b) / 1) 0%, oklab(calc(var(--_ce) / 3 * 0.6 + 0.2) var(--_a) var(--_b) / 0) 100%),
+    radial-gradient(50% 75% at 83.33% 75%, oklab(calc(var(--_cf) / 3 * 0.6 + 0.2) var(--_a) var(--_b) / 1) 0%, oklab(calc(var(--_cf) / 3 * 0.6 + 0.2) var(--_a) var(--_b) / 0) 100%);
+}
+
+
+:root {
+  --bg: #ffffff; --fg: #16181d; --dim: #6b7280; --line: #e5e7eb;
+  --panel: #f8f9fb; --accent: #2563eb; --rec: #059669;
+  color-scheme: light dark;
+}
+@media (prefers-color-scheme: dark) {
+  :root { --bg: #0d0f13; --fg: #e8eaed; --dim: #9aa1ad; --line: #262a33;
+          --panel: #14171d; --accent: #60a5fa; --rec: #34d399; }
+}
+* { box-sizing: border-box; }
+body {
+  margin: 0; background: var(--bg); color: var(--fg);
+  font: 15px/1.6 ui-sans-serif, -apple-system, "Segoe UI", Roboto, sans-serif;
+  -webkit-font-smoothing: antialiased;
+}
+.wrap { max-width: 1180px; margin: 0 auto; padding: 40px 24px 96px; }
+h1 { font-size: 30px; line-height: 1.2; margin: 0 0 8px; letter-spacing: -0.02em; }
+h2 { font-size: 20px; margin: 56px 0 6px; letter-spacing: -0.01em; }
+h3 { font-size: 16px; margin: 0 0 4px; display: flex; align-items: baseline; gap: 10px; flex-wrap: wrap; }
+p  { margin: 0 0 14px; max-width: 74ch; }
+.lede { color: var(--dim); font-size: 16px; margin-bottom: 4px; }
+.dim { color: var(--dim); }
+code, pre { font-family: ui-monospace, SFMono-Regular, Menlo, monospace; }
+
+/* ——— рамка плейсхолдера ——— */
+.frame {
+  position: relative; overflow: hidden; border-radius: 10px;
+  background: var(--panel); border: 1px solid var(--line);
+}
+.ph { position: absolute; inset: 0; background-position: center; }
+/* Блюр «вытекает» за края — прячем его увеличением внутри overflow:hidden. */
+.ph.blur { filter: blur(12px); transform: scale(1.12); }
+.real {
+  position: absolute; inset: 0; width: 100%; height: 100%;
+  object-fit: cover; opacity: 0; transition: opacity .45s ease;
+}
+body[data-state="loaded"] .real[src] { opacity: 1; }
+
+/* ——— карточки ——— */
+.cards { display: grid; grid-template-columns: repeat(auto-fill, minmax(150px, 1fr)); gap: 18px; margin-top: 20px; }
+.card { margin: 0; }
+.card-rec .frame { border-color: var(--rec); box-shadow: 0 0 0 2px color-mix(in oklab, var(--rec) 22%, transparent); }
+figcaption { margin-top: 9px; font-size: 13px; }
+.card-head { display: flex; align-items: center; gap: 6px; flex-wrap: wrap; }
+.card-sub { color: var(--dim); font-size: 12px; margin-top: 1px; }
+.card-metrics { margin-top: 6px; display: flex; align-items: center; gap: 6px; flex-wrap: wrap; }
+.bytes { font-family: ui-monospace, Menlo, monospace; font-size: 12px; color: var(--accent); font-weight: 600; }
+.pct { font-family: ui-monospace, Menlo, monospace; font-size: 11.5px; color: var(--rec); font-weight: 600; }
+.card-pct { margin-top: 3px; font-size: 11.5px; }
+h3 .pct { font-weight: 600; }
+.badge { font-size: 10px; text-transform: uppercase; letter-spacing: .04em;
+  background: var(--rec); color: #fff; border-radius: 4px; padding: 2px 5px; font-weight: 700; }
+.chip { font-size: 11px; border-radius: 999px; padding: 1px 8px; border: 1px solid var(--line); color: var(--dim); }
+.chip-nojs { color: var(--rec); border-color: color-mix(in oklab, var(--rec) 40%, transparent); }
+.chip-js { color: #d97706; border-color: color-mix(in oklab, #d97706 40%, transparent); }
+
+/* Эталон «без плейсхолдера»: пустая рамка, а не серая заливка —
+   иначе получился бы ещё один плейсхолдер, только цветом фона. */
+.ph-empty { background: transparent; }
+
+/* ——— панель управления ——— */
+.controls {
+  display: flex; align-items: center; gap: 16px; flex-wrap: wrap;
+  margin-top: 18px; padding: 14px 16px; border: 1px solid var(--line);
+  border-radius: 10px; background: var(--panel);
+}
+.speeds { display: flex; gap: 10px; flex-wrap: wrap; flex: 1 1 auto; }
+.speed {
+  display: flex; align-items: flex-start; gap: 8px; cursor: pointer;
+  padding: 9px 12px; border: 1px solid var(--line); border-radius: 8px;
+  background: var(--bg); font-size: 13px; color: var(--fg);
+  transition: border-color .15s, box-shadow .15s;
+}
+.speed:hover { border-color: color-mix(in oklab, var(--accent) 45%, var(--line)); }
+.speed:has(input:checked) {
+  border-color: var(--accent);
+  box-shadow: 0 0 0 2px color-mix(in oklab, var(--accent) 20%, transparent);
+}
+.speed input { margin: 2px 0 0; accent-color: var(--accent); }
+.speed-body { display: flex; flex-direction: column; gap: 1px; line-height: 1.35; }
+.speed-body .dim { font-size: 11.5px; }
+.speed-time { font-family: ui-monospace, Menlo, monospace; font-size: 11.5px;
+  color: var(--accent); font-weight: 600; }
+button {
+  font: inherit; font-size: 14px; font-weight: 600; cursor: pointer;
+  background: var(--accent); color: #fff; border: 0; border-radius: 7px; padding: 8px 16px;
+}
+button:hover { filter: brightness(1.08); }
+label { font-size: 13px; color: var(--dim); display: flex; align-items: center; gap: 7px; }
+select { font: inherit; font-size: 13px; padding: 5px 8px; border-radius: 6px;
+  border: 1px solid var(--line); background: var(--bg); color: var(--fg); }
+
+/* ——— таблица ——— */
+.tablewrap { overflow-x: auto; margin-top: 18px; }
+table { border-collapse: collapse; width: 100%; font-size: 14px; min-width: 560px; }
+th, td { text-align: left; padding: 9px 12px; border-bottom: 1px solid var(--line); vertical-align: top; }
+th { font-size: 12px; text-transform: uppercase; letter-spacing: .04em; color: var(--dim); font-weight: 600; }
+td.num { font-family: ui-monospace, Menlo, monospace; white-space: nowrap; }
+tr.rec td { background: color-mix(in oklab, var(--rec) 8%, transparent); }
+
+/* ——— мелкие сетки ——— */
+.minis { display: grid; grid-template-columns: repeat(auto-fill, minmax(120px, 1fr)); gap: 14px; margin-top: 18px; }
+.mini { margin: 0; }
+.mini figcaption { display: flex; justify-content: space-between; gap: 8px; align-items: baseline; }
+.other { margin-top: 18px; }
+.other-grid { display: grid; grid-template-columns: repeat(5, 1fr); gap: 12px; }
+
+/* ——— детали ——— */
+.detail { display: grid; grid-template-columns: 160px minmax(0, 1fr); gap: 22px; align-items: start;
+  padding: 20px 0; border-bottom: 1px solid var(--line); }
+/* Элемент grid по умолчанию не сжимается ниже min-content, поэтому длинный <pre>
+   с кодом растягивал бы всю страницу вместо того, чтобы скроллиться внутри себя. */
+.detail-body { min-width: 0; }
+pre { background: var(--panel); border: 1px solid var(--line); border-radius: 8px;
+  padding: 12px 14px; overflow: auto; max-height: 300px;
+  font-size: 12.5px; line-height: 1.55; margin: 10px 0 0; }
+.note { border-left: 3px solid var(--accent); background: var(--panel);
+  padding: 12px 16px; border-radius: 0 8px 8px 0; margin: 16px 0; }
+
+/* ——— блок 3: интерактивная загрузка ——— */
+.dropzone {
+  display: flex; flex-direction: column; align-items: center; justify-content: center; gap: 4px;
+  padding: 34px 20px; margin-top: 18px; cursor: pointer; text-align: center;
+  border: 2px dashed var(--line); border-radius: 12px; background: var(--panel);
+  transition: border-color .15s, background .15s;
+}
+.dropzone:hover, .dropzone.drag { border-color: var(--accent);
+  background: color-mix(in oklab, var(--accent) 7%, var(--panel)); }
+.dropzone .dim { font-size: 13px; }
+.upsummary { margin-top: 14px; padding: 11px 15px; border-radius: 8px; font-size: 14px;
+  background: color-mix(in oklab, var(--rec) 12%, transparent);
+  border: 1px solid color-mix(in oklab, var(--rec) 35%, transparent); }
+.up-item { margin-top: 22px; padding-top: 18px; border-top: 1px solid var(--line); }
+.up-name { font-weight: 600; margin-bottom: 10px; font-size: 14px; }
+.up-grid { display: grid; grid-template-columns: repeat(4, 1fr); gap: 14px; max-width: 640px; }
+.mini-best .frame { border-color: var(--rec);
+  box-shadow: 0 0 0 2px color-mix(in oklab, var(--rec) 22%, transparent); }
+.mini-ref .frame { border-style: dashed; }
+.up-meta { display: flex; flex-wrap: wrap; gap: 8px 16px; margin-top: 12px; font-size: 13px; color: var(--dim); }
+.up-meta code { background: var(--panel); border: 1px solid var(--line);
+  border-radius: 4px; padding: 1px 5px; font-size: 12px; color: var(--fg); }
+
+/* ——— замер стоимости обработки ——— */
+.bench { margin: 18px 0; display: flex; flex-direction: column; gap: 7px; }
+.bench-row { display: grid; grid-template-columns: 1fr auto; align-items: center;
+  gap: 4px 12px; font-size: 13.5px; }
+.bench-row b { font-family: ui-monospace, Menlo, monospace; font-size: 13px; }
+.bench-row i { grid-column: 1 / -1; height: 6px; border-radius: 3px;
+  background: color-mix(in oklab, var(--dim) 45%, transparent); min-width: 3px; }
+.bench-fast b { color: var(--rec); }
+.bench-fast i { background: var(--rec); }
+.bench-slow b { color: #d97706; }
+.bench-slow i { background: #d97706; }
+
+/* ——— схема процесса ——— */
+.pipe { margin: 20px 0; }
+.pipe-lane { border: 1px solid var(--line); border-radius: 10px; padding: 14px 18px; background: var(--panel); }
+.lane-sync { border-color: color-mix(in oklab, var(--rec) 45%, var(--line)); }
+.lane-async { border-color: color-mix(in oklab, #d97706 40%, var(--line)); }
+.lane-head { font-size: 13.5px; color: var(--dim); margin-bottom: 8px;
+  display: flex; align-items: center; gap: 8px; flex-wrap: wrap; }
+.lane-head b { color: var(--fg); font-family: ui-monospace, Menlo, monospace; font-size: 12.5px; }
+.lane-tag { font-size: 11px; text-transform: uppercase; letter-spacing: .04em; font-weight: 700;
+  border-radius: 4px; padding: 2px 7px; background: var(--dim); color: var(--bg); }
+.lane-tag-fast { background: var(--rec); color: #fff; }
+.lane-tag-slow { background: #d97706; color: #fff; }
+.lane-steps { margin: 0; padding-left: 20px; font-size: 14px; }
+.lane-steps li { margin-bottom: 5px; }
+.pipe-arrow { text-align: center; padding: 8px 0; color: var(--dim); font-size: 13px; }
+.note b { color: var(--fg); }
+ul { padding-left: 20px; max-width: 74ch; }
+li { margin-bottom: 7px; }
+
+@media (max-width: 720px) {
+  .wrap { padding: 28px 16px 64px; }
+  h1 { font-size: 24px; }
+  .detail { grid-template-columns: minmax(0, 1fr); }
+  h3 { flex-wrap: wrap; gap: 4px 8px; }
+  .detail-visual { max-width: 180px; }
+  .other-grid { grid-template-columns: repeat(2, 1fr); }
+}
+</style>
+</head>
+<body data-state="idle">
+<div class="wrap">
+
+<h1>Blur-плейсхолдеры изображений</h1>
+<p class="lede">Что именно увидит клиент, пока грузится картинка — семь техник на одном изображении,
+с настоящими байтами. Всё посчитано локально через sharp, thumbhash и blurhash.</p>
+
+<h2>Входное изображение</h2>
+<p class="dim">main.webp · 1200×1697 · webp · <b>79 КБ</b> —
+именно столько клиент ждёт, если плейсхолдера нет.</p>
+
+<h2>Блок 1. Как выглядит блюр</h2>
+<p>Статично: ровно то, что видит клиент, пока картинка ещё не пришла. Оригинал слева — для сверки.
+Число под карточкой это вес, который техника добавляет <b>в сам HTML</b>.</p>
+
+<div class="cards">
+<figure class="card">
+  <div class="frame" style="aspect-ratio:1200 / 1697">
+    <div class="ph" style="background-image:url('img/main.webp');background-size:cover"></div>
+    
+  </div>
+  <figcaption>
+    <div class="card-head"><b>Оригинал</b></div>
+    <div class="card-sub">1200×1697, webp</div>
+    <div class="card-metrics"><span class="bytes">79 КБ</span></div>
+    <div class="card-pct dim">базовая точка, ×1</div>
+  </figcaption>
+</figure>
+<figure class="card card-rec">
+  <div class="frame" style="aspect-ratio:1200 / 1697">
+    <div class="ph blur" style="background-image:url('data:image/webp;base64,UklGRuIAAABXRUJQVlA4INYAAACwBQCdASoUABwAPu1kqk2ppaQiMAgBMB2JQBafP/wGK2eHXTb7hBjq+xXcC857loxaCudmDwgA/tZ4XXh0RbLI4LesGj+/qm6Mi01cvqP6pMp72xHZr6wDf3wz2e29i9a5+g453gWsSnLl/xiPV7fkc220jEdNeNzY9zeZ8Wm303UcsnddBkzPnOaMj6FldZ/xLx+a9Eheku9DLwEPVm9ueoCCUFgMj2Oisp9Dbx2gnR5DHbUDCyyB9B+woY7VePml7PmKa67TeS6EiD6QJHP6Ho+tQAAA');background-size:cover"></div>
+    
+  </div>
+  <figcaption>
+    <div class="card-head"><b>base64 LQIP</b><span class="badge">рекомендую</span></div>
+    <div class="card-sub">WebP 20 px, q40</div>
+    <div class="card-metrics"><span class="bytes">335 B</span><span class="chip chip-nojs">без JS</span></div>
+    <div class="card-pct"><span class="pct">в 240× меньше</span></div>
+  </figcaption>
+</figure>
+<figure class="card">
+  <div class="frame" style="aspect-ratio:1200 / 1697">
+    <div class="ph" style="background-color:#b19b95"></div>
+    
+  </div>
+  <figcaption>
+    <div class="card-head"><b>Доминирующий цвет</b></div>
+    <div class="card-sub">один hex, нижняя граница</div>
+    <div class="card-metrics"><span class="bytes">7 B</span><span class="chip chip-nojs">без JS</span></div>
+    <div class="card-pct"><span class="pct">в 11 600× меньше</span></div>
+  </figcaption>
+</figure>
+<figure class="card">
+  <div class="frame" style="aspect-ratio:1200 / 1697">
+    <div class="ph ph-lqip-int" style="--lqip:442348;--lqip-fallback:#d6b6a8"></div>
+    
+  </div>
+  <figcaption>
+    <div class="card-head"><b>Одно число (CSS-only)</b></div>
+    <div class="card-sub">метод Lean Rada, 20 бит</div>
+    <div class="card-metrics"><span class="bytes">6 B</span><span class="chip chip-nojs">без JS</span></div>
+    <div class="card-pct"><span class="pct">в 13 500× меньше</span></div>
+  </figcaption>
+</figure>
+<figure class="card">
+  <div class="frame" style="aspect-ratio:1200 / 1697">
+    <div class="ph" style="background-color:#b19b95;background-image:radial-gradient(25% 25% at 12.5% 12.5%, rgb(207 195 204 / 1) 0%, rgb(207 195 204 / 0) 100%), radial-gradient(25% 25% at 37.5% 12.5%, rgb(159 131 114 / 1) 0%, rgb(159 131 114 / 0) 100%), radial-gradient(25% 25% at 62.5% 12.5%, rgb(156 130 114 / 1) 0%, rgb(156 130 114 / 0) 100%), radial-gradient(25% 25% at 87.5% 12.5%, rgb(156 131 114 / 1) 0%, rgb(156 131 114 / 0) 100%), radial-gradient(25% 25% at 12.5% 37.5%, rgb(181 156 152 / 1) 0%, rgb(181 156 152 / 0) 100%), radial-gradient(25% 25% at 37.5% 37.5%, rgb(178 159 149 / 1) 0%, rgb(178 159 149 / 0) 100%), radial-gradient(25% 25% at 62.5% 37.5%, rgb(180 145 130 / 1) 0%, rgb(180 145 130 / 0) 100%), radial-gradient(25% 25% at 87.5% 37.5%, rgb(137 107 92 / 1) 0%, rgb(137 107 92 / 0) 100%), radial-gradient(25% 25% at 12.5% 62.5%, rgb(187 160 152 / 1) 0%, rgb(187 160 152 / 0) 100%), radial-gradient(25% 25% at 37.5% 62.5%, rgb(175 153 145 / 1) 0%, rgb(175 153 145 / 0) 100%), radial-gradient(25% 25% at 62.5% 62.5%, rgb(160 143 136 / 1) 0%, rgb(160 143 136 / 0) 100%), radial-gradient(25% 25% at 87.5% 62.5%, rgb(127 124 122 / 1) 0%, rgb(127 124 122 / 0) 100%), radial-gradient(25% 25% at 12.5% 87.5%, rgb(185 164 171 / 1) 0%, rgb(185 164 171 / 0) 100%), radial-gradient(25% 25% at 37.5% 87.5%, rgb(203 183 180 / 1) 0%, rgb(203 183 180 / 0) 100%), radial-gradient(25% 25% at 62.5% 87.5%, rgb(205 193 196 / 1) 0%, rgb(205 193 196 / 0) 100%), radial-gradient(25% 25% at 87.5% 87.5%, rgb(222 220 230 / 1) 0%, rgb(222 220 230 / 0) 100%)"></div>
+    
+  </div>
+  <figcaption>
+    <div class="card-head"><b>CSS-градиенты</b></div>
+    <div class="card-sub">16 radial-gradient из сетки 4×4</div>
+    <div class="card-metrics"><span class="bytes">1.5 КБ</span><span class="chip chip-nojs">без JS</span></div>
+    <div class="card-pct"><span class="pct">в 53× меньше</span></div>
+  </figcaption>
+</figure>
+<figure class="card">
+  <div class="frame" style="aspect-ratio:1200 / 1697">
+    <div class="ph" style="background-image:url('data:image/svg+xml;base64,PHN2ZyB4bWxucz0iaHR0cDovL3d3dy53My5vcmcvMjAwMC9zdmciIHZpZXdCb3g9IjAgMCA2IDYiIHByZXNlcnZlQXNwZWN0UmF0aW89Im5vbmUiPjxmaWx0ZXIgaWQ9ImIiPjxmZUdhdXNzaWFuQmx1ciBzdGREZXZpYXRpb249IjAuNiIvPjwvZmlsdGVyPjxnIGZpbHRlcj0idXJsKCNiKSI+PHJlY3QgeD0iMCIgeT0iMCIgd2lkdGg9IjEiIGhlaWdodD0iMSIgZmlsbD0iI2QxYzVkNSIvPjxyZWN0IHg9IjEiIHk9IjAiIHdpZHRoPSIxIiBoZWlnaHQ9IjEiIGZpbGw9IiNjZmI5YjciLz48cmVjdCB4PSIyIiB5PSIwIiB3aWR0aD0iMSIgaGVpZ2h0PSIxIiBmaWxsPSIjOTg3ZDZhIi8+PHJlY3QgeD0iMyIgeT0iMCIgd2lkdGg9IjEiIGhlaWdodD0iMSIgZmlsbD0iIzlhODA3MCIvPjxyZWN0IHg9IjQiIHk9IjAiIHdpZHRoPSIxIiBoZWlnaHQ9IjEiIGZpbGw9IiM4ZTc0NjQiLz48cmVjdCB4PSI1IiB5PSIwIiB3aWR0aD0iMSIgaGVpZ2h0PSIxIiBmaWxsPSIjOWQ4NDc0Ii8+PHJlY3QgeD0iMCIgeT0iMSIgd2lkdGg9IjEiIGhlaWdodD0iMSIgZmlsbD0iI2M3YmFjNSIvPjxyZWN0IHg9IjEiIHk9IjEiIHdpZHRoPSIxIiBoZWlnaHQ9IjEiIGZpbGw9IiNhMzg3NzgiLz48cmVjdCB4PSIyIiB5PSIxIiB3aWR0aD0iMSIgaGVpZ2h0PSIxIiBmaWxsPSIjYTc4ZTdmIi8+PHJlY3QgeD0iMyIgeT0iMSIgd2lkdGg9IjEiIGhlaWdodD0iMSIgZmlsbD0iI2JkOWU5MSIvPjxyZWN0IHg9IjQiIHk9IjEiIHdpZHRoPSIxIiBoZWlnaHQ9IjEiIGZpbGw9IiNjOGE3OWEiLz48cmVjdCB4PSI1IiB5PSIxIiB3aWR0aD0iMSIgaGVpZ2h0PSIxIiBmaWxsPSIjOWE3ZjZmIi8+PHJlY3QgeD0iMCIgeT0iMiIgd2lkdGg9IjEiIGhlaWdodD0iMSIgZmlsbD0iI2FlOTg5OSIvPjxyZWN0IHg9IjEiIHk9IjIiIHdpZHRoPSIxIiBoZWlnaHQ9IjEiIGZpbGw9IiNhYjhjN2UiLz48cmVjdCB4PSIyIiB5PSIyIiB3aWR0aD0iMSIgaGVpZ2h0PSIxIiBmaWxsPSIjY2JjNWMwIi8+PHJlY3QgeD0iMyIgeT0iMiIgd2lkdGg9IjEiIGhlaWdodD0iMSIgZmlsbD0iI2IxOTA4MyIvPjxyZWN0IHg9IjQiIHk9IjIiIHdpZHRoPSIxIiBoZWlnaHQ9IjEiIGZpbGw9IiNhZDgwNzIiLz48cmVjdCB4PSI1IiB5PSIyIiB3aWR0aD0iMSIgaGVpZ2h0PSIxIiBmaWxsPSIjNjQ0OTM4Ii8+PHJlY3QgeD0iMCIgeT0iMyIgd2lkdGg9IjEiIGhlaWdodD0iMSIgZmlsbD0iI2JhOWI5NyIvPjxyZWN0IHg9IjEiIHk9IjMiIHdpZHRoPSIxIiBoZWlnaHQ9IjEiIGZpbGw9IiNjM2ExOTUiLz48cmVjdCB4PSIyIiB5PSIzIiB3aWR0aD0iMSIgaGVpZ2h0PSIxIiBmaWxsPSIjOTg4MDc0Ii8+PHJlY3QgeD0iMyIgeT0iMyIgd2lkdGg9IjEiIGhlaWdodD0iMSIgZmlsbD0iIzgzNmQ1ZiIvPjxyZWN0IHg9IjQiIHk9IjMiIHdpZHRoPSIxIiBoZWlnaHQ9IjEiIGZpbGw9IiM5OTgxN2EiLz48cmVjdCB4PSI1IiB5PSIzIiB3aWR0aD0iMSIgaGVpZ2h0PSIxIiBmaWxsPSIjNTU0ZjQ3Ii8+PHJlY3QgeD0iMCIgeT0iNCIgd2lkdGg9IjEiIGhlaWdodD0iMSIgZmlsbD0iI2JkYTI5YyIvPjxyZWN0IHg9IjEiIHk9IjQiIHdpZHRoPSIxIiBoZWlnaHQ9IjEiIGZpbGw9IiNjNmI5YmQiLz48cmVjdCB4PSIyIiB5PSI0IiB3aWR0aD0iMSIgaGVpZ2h0PSIxIiBmaWxsPSIjYmNhZWFjIi8+PHJlY3QgeD0iMyIgeT0iNCIgd2lkdGg9IjEiIGhlaWdodD0iMSIgZmlsbD0iI2MyYjliNiIvPjxyZWN0IHg9IjQiIHk9IjQiIHdpZHRoPSIxIiBoZWlnaHQ9IjEiIGZpbGw9IiNjNmQyZGMiLz48cmVjdCB4PSI1IiB5PSI0IiB3aWR0aD0iMSIgaGVpZ2h0PSIxIiBmaWxsPSIjY2VkOWUyIi8+PHJlY3QgeD0iMCIgeT0iNSIgd2lkdGg9IjEiIGhlaWdodD0iMSIgZmlsbD0iI2I0OWJhNSIvPjxyZWN0IHg9IjEiIHk9IjUiIHdpZHRoPSIxIiBoZWlnaHQ9IjEiIGZpbGw9IiNjZmI0YjEiLz48cmVjdCB4PSIyIiB5PSI1IiB3aWR0aD0iMSIgaGVpZ2h0PSIxIiBmaWxsPSIjYmZhNmExIi8+PHJlY3QgeD0iMyIgeT0iNSIgd2lkdGg9IjEiIGhlaWdodD0iMSIgZmlsbD0iI2JiYTZhNiIvPjxyZWN0IHg9IjQiIHk9IjUiIHdpZHRoPSIxIiBoZWlnaHQ9IjEiIGZpbGw9IiNkNGNmZDYiLz48cmVjdCB4PSI1IiB5PSI1IiB3aWR0aD0iMSIgaGVpZ2h0PSIxIiBmaWxsPSIjZDNjZWQ3Ii8+PC9nPjwvc3ZnPg==');background-size:100% 100%"></div>
+    
+  </div>
+  <figcaption>
+    <div class="card-head"><b>SVG-сетка</b></div>
+    <div class="card-sub">plaiceholder .svg, 6×6 + блюр</div>
+    <div class="card-metrics"><span class="bytes">2.8 КБ</span><span class="chip chip-nojs">без JS</span></div>
+    <div class="card-pct"><span class="pct">в 28× меньше</span></div>
+  </figcaption>
+</figure>
+<figure class="card">
+  <div class="frame" style="aspect-ratio:1200 / 1697">
+    <div class="ph blur" style="background-image:url('data:image/webp;base64,UklGRmoAAABXRUJQVlA4IF4AAACQBACdASoXACAAPuFepU2opSOiN/VYARAcCWMApaw+gMgMqe2bOFKOCbndCSQA/tV1lpm3ITzFOsLf41ssGD6eeOvKN/MUzPG9zJU4Ep8RCx4B6smZvdiV8ek4wAAA');background-size:cover"></div>
+    
+  </div>
+  <figcaption>
+    <div class="card-head"><b>ThumbHash</b></div>
+    <div class="card-sub">хэш 21 B → SSR-декод → WebP</div>
+    <div class="card-metrics"><span class="bytes">175 B</span><span class="chip chip-js">нужен JS</span></div>
+    <div class="card-pct"><span class="pct">в 460× меньше</span></div>
+  </figcaption>
+</figure>
+<figure class="card">
+  <div class="frame" style="aspect-ratio:1200 / 1697">
+    <div class="ph blur" style="background-image:url('data:image/webp;base64,UklGRmYAAABXRUJQVlA4IFoAAACQBACdASogAC4APulipE2zJaMyMAqqYB0JZQDGQBujH2uYNCgKbxrIwis+OAAA/t7oUd43khWozpcdwlgGfgYdCOk1vtYPvlbblPKdLrpp2x1Mn6Z8STwiAAA=');background-size:cover"></div>
+    
+  </div>
+  <figcaption>
+    <div class="card-head"><b>BlurHash</b></div>
+    <div class="card-sub">36 симв. → SSR-декод → WebP</div>
+    <div class="card-metrics"><span class="bytes">171 B</span><span class="chip chip-js">нужен JS</span></div>
+    <div class="card-pct"><span class="pct">в 470× меньше</span></div>
+  </figcaption>
+</figure>
+</div>
+
+<h2>Блок 2. Симуляция загрузки</h2>
+<p>Здесь поверх плейсхолдера проявляется оригинал. Задержка не выдумана: она посчитана
+из настоящего веса файла (<b>79 КБ</b>) и выбранной скорости — время передачи плюс сетевая задержка.
+Профили те же, что во вкладке Network в DevTools, так что результат можно перепроверить.</p>
+
+<div class="controls">
+  <div class="speeds">
+<label class="speed">
+  <input type="radio" name="speed" value="slow" data-delay="2019" checked>
+  <span class="speed-body">
+    <b>Мобильный интернет</b>
+    <span class="dim">3G, 400 Кбит/с · задержка 400 мс</span>
+    <span class="speed-time">≈ 2,0 с</span>
+  </span>
+</label>
+<label class="speed">
+  <input type="radio" name="speed" value="mid" data-delay="555">
+  <span class="speed-body">
+    <b>Стандартный мобильный</b>
+    <span class="dim">4G, 1,6 Мбит/с · задержка 150 мс</span>
+    <span class="speed-time">≈ 555 мс</span>
+  </span>
+</label>
+<label class="speed">
+  <input type="radio" name="speed" value="fast" data-delay="33">
+  <span class="speed-body">
+    <b>Быстрый интернет</b>
+    <span class="dim">50 Мбит/с · задержка 20 мс</span>
+    <span class="speed-time">≈ 33 мс</span>
+  </span>
+</label>
+  </div>
+  <button id="replay">Воспроизвести загрузку</button>
+</div>
+
+<div class="cards">
+<figure class="card">
+  <div class="frame" style="aspect-ratio:1200 / 1697">
+    <div class="ph ph-empty"></div>
+    <img class="real" data-src="img/main.webp" alt="" width="1200" height="1697">
+  </div>
+  <figcaption>
+    <div class="card-head"><b>Без плейсхолдера</b></div>
+    <div class="card-sub">пустое место до загрузки</div>
+    <div class="card-metrics"><span class="bytes">0 B</span></div>
+    <div class="card-pct dim">ничего не добавляет</div>
+  </figcaption>
+</figure>
+<figure class="card card-rec">
+  <div class="frame" style="aspect-ratio:1200 / 1697">
+    <div class="ph blur" style="background-image:url('data:image/webp;base64,UklGRuIAAABXRUJQVlA4INYAAACwBQCdASoUABwAPu1kqk2ppaQiMAgBMB2JQBafP/wGK2eHXTb7hBjq+xXcC857loxaCudmDwgA/tZ4XXh0RbLI4LesGj+/qm6Mi01cvqP6pMp72xHZr6wDf3wz2e29i9a5+g453gWsSnLl/xiPV7fkc220jEdNeNzY9zeZ8Wm303UcsnddBkzPnOaMj6FldZ/xLx+a9Eheku9DLwEPVm9ueoCCUFgMj2Oisp9Dbx2gnR5DHbUDCyyB9B+woY7VePml7PmKa67TeS6EiD6QJHP6Ho+tQAAA');background-size:cover"></div>
+    <img class="real" data-src="img/main.webp" alt="" width="1200" height="1697">
+  </div>
+  <figcaption>
+    <div class="card-head"><b>base64 LQIP</b><span class="badge">рекомендую</span></div>
+    <div class="card-sub">WebP 20 px, q40</div>
+    <div class="card-metrics"><span class="bytes">335 B</span><span class="chip chip-nojs">без JS</span></div>
+    <div class="card-pct"><span class="pct">в 240× меньше</span></div>
+  </figcaption>
+</figure>
+<figure class="card">
+  <div class="frame" style="aspect-ratio:1200 / 1697">
+    <div class="ph" style="background-color:#b19b95"></div>
+    <img class="real" data-src="img/main.webp" alt="" width="1200" height="1697">
+  </div>
+  <figcaption>
+    <div class="card-head"><b>Доминирующий цвет</b></div>
+    <div class="card-sub">один hex, нижняя граница</div>
+    <div class="card-metrics"><span class="bytes">7 B</span><span class="chip chip-nojs">без JS</span></div>
+    <div class="card-pct"><span class="pct">в 11 600× меньше</span></div>
+  </figcaption>
+</figure>
+<figure class="card">
+  <div class="frame" style="aspect-ratio:1200 / 1697">
+    <div class="ph ph-lqip-int" style="--lqip:442348;--lqip-fallback:#d6b6a8"></div>
+    <img class="real" data-src="img/main.webp" alt="" width="1200" height="1697">
+  </div>
+  <figcaption>
+    <div class="card-head"><b>Одно число (CSS-only)</b></div>
+    <div class="card-sub">метод Lean Rada, 20 бит</div>
+    <div class="card-metrics"><span class="bytes">6 B</span><span class="chip chip-nojs">без JS</span></div>
+    <div class="card-pct"><span class="pct">в 13 500× меньше</span></div>
+  </figcaption>
+</figure>
+<figure class="card">
+  <div class="frame" style="aspect-ratio:1200 / 1697">
+    <div class="ph" style="background-color:#b19b95;background-image:radial-gradient(25% 25% at 12.5% 12.5%, rgb(207 195 204 / 1) 0%, rgb(207 195 204 / 0) 100%), radial-gradient(25% 25% at 37.5% 12.5%, rgb(159 131 114 / 1) 0%, rgb(159 131 114 / 0) 100%), radial-gradient(25% 25% at 62.5% 12.5%, rgb(156 130 114 / 1) 0%, rgb(156 130 114 / 0) 100%), radial-gradient(25% 25% at 87.5% 12.5%, rgb(156 131 114 / 1) 0%, rgb(156 131 114 / 0) 100%), radial-gradient(25% 25% at 12.5% 37.5%, rgb(181 156 152 / 1) 0%, rgb(181 156 152 / 0) 100%), radial-gradient(25% 25% at 37.5% 37.5%, rgb(178 159 149 / 1) 0%, rgb(178 159 149 / 0) 100%), radial-gradient(25% 25% at 62.5% 37.5%, rgb(180 145 130 / 1) 0%, rgb(180 145 130 / 0) 100%), radial-gradient(25% 25% at 87.5% 37.5%, rgb(137 107 92 / 1) 0%, rgb(137 107 92 / 0) 100%), radial-gradient(25% 25% at 12.5% 62.5%, rgb(187 160 152 / 1) 0%, rgb(187 160 152 / 0) 100%), radial-gradient(25% 25% at 37.5% 62.5%, rgb(175 153 145 / 1) 0%, rgb(175 153 145 / 0) 100%), radial-gradient(25% 25% at 62.5% 62.5%, rgb(160 143 136 / 1) 0%, rgb(160 143 136 / 0) 100%), radial-gradient(25% 25% at 87.5% 62.5%, rgb(127 124 122 / 1) 0%, rgb(127 124 122 / 0) 100%), radial-gradient(25% 25% at 12.5% 87.5%, rgb(185 164 171 / 1) 0%, rgb(185 164 171 / 0) 100%), radial-gradient(25% 25% at 37.5% 87.5%, rgb(203 183 180 / 1) 0%, rgb(203 183 180 / 0) 100%), radial-gradient(25% 25% at 62.5% 87.5%, rgb(205 193 196 / 1) 0%, rgb(205 193 196 / 0) 100%), radial-gradient(25% 25% at 87.5% 87.5%, rgb(222 220 230 / 1) 0%, rgb(222 220 230 / 0) 100%)"></div>
+    <img class="real" data-src="img/main.webp" alt="" width="1200" height="1697">
+  </div>
+  <figcaption>
+    <div class="card-head"><b>CSS-градиенты</b></div>
+    <div class="card-sub">16 radial-gradient из сетки 4×4</div>
+    <div class="card-metrics"><span class="bytes">1.5 КБ</span><span class="chip chip-nojs">без JS</span></div>
+    <div class="card-pct"><span class="pct">в 53× меньше</span></div>
+  </figcaption>
+</figure>
+<figure class="card">
+  <div class="frame" style="aspect-ratio:1200 / 1697">
+    <div class="ph" style="background-image:url('data:image/svg+xml;base64,PHN2ZyB4bWxucz0iaHR0cDovL3d3dy53My5vcmcvMjAwMC9zdmciIHZpZXdCb3g9IjAgMCA2IDYiIHByZXNlcnZlQXNwZWN0UmF0aW89Im5vbmUiPjxmaWx0ZXIgaWQ9ImIiPjxmZUdhdXNzaWFuQmx1ciBzdGREZXZpYXRpb249IjAuNiIvPjwvZmlsdGVyPjxnIGZpbHRlcj0idXJsKCNiKSI+PHJlY3QgeD0iMCIgeT0iMCIgd2lkdGg9IjEiIGhlaWdodD0iMSIgZmlsbD0iI2QxYzVkNSIvPjxyZWN0IHg9IjEiIHk9IjAiIHdpZHRoPSIxIiBoZWlnaHQ9IjEiIGZpbGw9IiNjZmI5YjciLz48cmVjdCB4PSIyIiB5PSIwIiB3aWR0aD0iMSIgaGVpZ2h0PSIxIiBmaWxsPSIjOTg3ZDZhIi8+PHJlY3QgeD0iMyIgeT0iMCIgd2lkdGg9IjEiIGhlaWdodD0iMSIgZmlsbD0iIzlhODA3MCIvPjxyZWN0IHg9IjQiIHk9IjAiIHdpZHRoPSIxIiBoZWlnaHQ9IjEiIGZpbGw9IiM4ZTc0NjQiLz48cmVjdCB4PSI1IiB5PSIwIiB3aWR0aD0iMSIgaGVpZ2h0PSIxIiBmaWxsPSIjOWQ4NDc0Ii8+PHJlY3QgeD0iMCIgeT0iMSIgd2lkdGg9IjEiIGhlaWdodD0iMSIgZmlsbD0iI2M3YmFjNSIvPjxyZWN0IHg9IjEiIHk9IjEiIHdpZHRoPSIxIiBoZWlnaHQ9IjEiIGZpbGw9IiNhMzg3NzgiLz48cmVjdCB4PSIyIiB5PSIxIiB3aWR0aD0iMSIgaGVpZ2h0PSIxIiBmaWxsPSIjYTc4ZTdmIi8+PHJlY3QgeD0iMyIgeT0iMSIgd2lkdGg9IjEiIGhlaWdodD0iMSIgZmlsbD0iI2JkOWU5MSIvPjxyZWN0IHg9IjQiIHk9IjEiIHdpZHRoPSIxIiBoZWlnaHQ9IjEiIGZpbGw9IiNjOGE3OWEiLz48cmVjdCB4PSI1IiB5PSIxIiB3aWR0aD0iMSIgaGVpZ2h0PSIxIiBmaWxsPSIjOWE3ZjZmIi8+PHJlY3QgeD0iMCIgeT0iMiIgd2lkdGg9IjEiIGhlaWdodD0iMSIgZmlsbD0iI2FlOTg5OSIvPjxyZWN0IHg9IjEiIHk9IjIiIHdpZHRoPSIxIiBoZWlnaHQ9IjEiIGZpbGw9IiNhYjhjN2UiLz48cmVjdCB4PSIyIiB5PSIyIiB3aWR0aD0iMSIgaGVpZ2h0PSIxIiBmaWxsPSIjY2JjNWMwIi8+PHJlY3QgeD0iMyIgeT0iMiIgd2lkdGg9IjEiIGhlaWdodD0iMSIgZmlsbD0iI2IxOTA4MyIvPjxyZWN0IHg9IjQiIHk9IjIiIHdpZHRoPSIxIiBoZWlnaHQ9IjEiIGZpbGw9IiNhZDgwNzIiLz48cmVjdCB4PSI1IiB5PSIyIiB3aWR0aD0iMSIgaGVpZ2h0PSIxIiBmaWxsPSIjNjQ0OTM4Ii8+PHJlY3QgeD0iMCIgeT0iMyIgd2lkdGg9IjEiIGhlaWdodD0iMSIgZmlsbD0iI2JhOWI5NyIvPjxyZWN0IHg9IjEiIHk9IjMiIHdpZHRoPSIxIiBoZWlnaHQ9IjEiIGZpbGw9IiNjM2ExOTUiLz48cmVjdCB4PSIyIiB5PSIzIiB3aWR0aD0iMSIgaGVpZ2h0PSIxIiBmaWxsPSIjOTg4MDc0Ii8+PHJlY3QgeD0iMyIgeT0iMyIgd2lkdGg9IjEiIGhlaWdodD0iMSIgZmlsbD0iIzgzNmQ1ZiIvPjxyZWN0IHg9IjQiIHk9IjMiIHdpZHRoPSIxIiBoZWlnaHQ9IjEiIGZpbGw9IiM5OTgxN2EiLz48cmVjdCB4PSI1IiB5PSIzIiB3aWR0aD0iMSIgaGVpZ2h0PSIxIiBmaWxsPSIjNTU0ZjQ3Ii8+PHJlY3QgeD0iMCIgeT0iNCIgd2lkdGg9IjEiIGhlaWdodD0iMSIgZmlsbD0iI2JkYTI5YyIvPjxyZWN0IHg9IjEiIHk9IjQiIHdpZHRoPSIxIiBoZWlnaHQ9IjEiIGZpbGw9IiNjNmI5YmQiLz48cmVjdCB4PSIyIiB5PSI0IiB3aWR0aD0iMSIgaGVpZ2h0PSIxIiBmaWxsPSIjYmNhZWFjIi8+PHJlY3QgeD0iMyIgeT0iNCIgd2lkdGg9IjEiIGhlaWdodD0iMSIgZmlsbD0iI2MyYjliNiIvPjxyZWN0IHg9IjQiIHk9IjQiIHdpZHRoPSIxIiBoZWlnaHQ9IjEiIGZpbGw9IiNjNmQyZGMiLz48cmVjdCB4PSI1IiB5PSI0IiB3aWR0aD0iMSIgaGVpZ2h0PSIxIiBmaWxsPSIjY2VkOWUyIi8+PHJlY3QgeD0iMCIgeT0iNSIgd2lkdGg9IjEiIGhlaWdodD0iMSIgZmlsbD0iI2I0OWJhNSIvPjxyZWN0IHg9IjEiIHk9IjUiIHdpZHRoPSIxIiBoZWlnaHQ9IjEiIGZpbGw9IiNjZmI0YjEiLz48cmVjdCB4PSIyIiB5PSI1IiB3aWR0aD0iMSIgaGVpZ2h0PSIxIiBmaWxsPSIjYmZhNmExIi8+PHJlY3QgeD0iMyIgeT0iNSIgd2lkdGg9IjEiIGhlaWdodD0iMSIgZmlsbD0iI2JiYTZhNiIvPjxyZWN0IHg9IjQiIHk9IjUiIHdpZHRoPSIxIiBoZWlnaHQ9IjEiIGZpbGw9IiNkNGNmZDYiLz48cmVjdCB4PSI1IiB5PSI1IiB3aWR0aD0iMSIgaGVpZ2h0PSIxIiBmaWxsPSIjZDNjZWQ3Ii8+PC9nPjwvc3ZnPg==');background-size:100% 100%"></div>
+    <img class="real" data-src="img/main.webp" alt="" width="1200" height="1697">
+  </div>
+  <figcaption>
+    <div class="card-head"><b>SVG-сетка</b></div>
+    <div class="card-sub">plaiceholder .svg, 6×6 + блюр</div>
+    <div class="card-metrics"><span class="bytes">2.8 КБ</span><span class="chip chip-nojs">без JS</span></div>
+    <div class="card-pct"><span class="pct">в 28× меньше</span></div>
+  </figcaption>
+</figure>
+<figure class="card">
+  <div class="frame" style="aspect-ratio:1200 / 1697">
+    <div class="ph blur" style="background-image:url('data:image/webp;base64,UklGRmoAAABXRUJQVlA4IF4AAACQBACdASoXACAAPuFepU2opSOiN/VYARAcCWMApaw+gMgMqe2bOFKOCbndCSQA/tV1lpm3ITzFOsLf41ssGD6eeOvKN/MUzPG9zJU4Ep8RCx4B6smZvdiV8ek4wAAA');background-size:cover"></div>
+    <img class="real" data-src="img/main.webp" alt="" width="1200" height="1697">
+  </div>
+  <figcaption>
+    <div class="card-head"><b>ThumbHash</b></div>
+    <div class="card-sub">хэш 21 B → SSR-декод → WebP</div>
+    <div class="card-metrics"><span class="bytes">175 B</span><span class="chip chip-js">нужен JS</span></div>
+    <div class="card-pct"><span class="pct">в 460× меньше</span></div>
+  </figcaption>
+</figure>
+<figure class="card">
+  <div class="frame" style="aspect-ratio:1200 / 1697">
+    <div class="ph blur" style="background-image:url('data:image/webp;base64,UklGRmYAAABXRUJQVlA4IFoAAACQBACdASogAC4APulipE2zJaMyMAqqYB0JZQDGQBujH2uYNCgKbxrIwis+OAAA/t7oUd43khWozpcdwlgGfgYdCOk1vtYPvlbblPKdLrpp2x1Mn6Z8STwiAAA=');background-size:cover"></div>
+    <img class="real" data-src="img/main.webp" alt="" width="1200" height="1697">
+  </div>
+  <figcaption>
+    <div class="card-head"><b>BlurHash</b></div>
+    <div class="card-sub">36 симв. → SSR-декод → WebP</div>
+    <div class="card-metrics"><span class="bytes">171 B</span><span class="chip chip-js">нужен JS</span></div>
+    <div class="card-pct"><span class="pct">в 470× меньше</span></div>
+  </figcaption>
+</figure>
+</div>
+
+<p class="dim" style="margin-top:14px">Первая карточка — как это выглядит <b>без плейсхолдера вообще</b>.
+Именно с ней и надо сравнивать: на быстром интернете разница почти незаметна, на мобильном —
+это разница между «страница живая» и «страница сломалась».</p>
+
+<div class="note">
+<b>Замер оптимистичный, в жизни хуже.</b> Здесь одна картинка получает весь канал целиком.
+На настоящей странице она стоит в очереди за CSS, шрифтами, скриптами и другими такими же картинками,
+а перед передачей ещё случается промах кеша CDN и установка TLS-соединения.
+Двадцать таких изображений на мобильном интернете — это уже десятки секунд до последнего,
+и всё это время плейсхолдер держит вёрстку и показывает, что там будет.
+</div>
+
+<h2>Блок 3. Попробуйте на своём изображении</h2>
+<p>Всё считается прямо здесь, в браузере, — ничего никуда не отправляется.
+Можно бросить сразу пачку файлов: сверху появится суммарное время обработки.
+Упаковка «одного числа» и цветовая арифметика — буквально тот же код, что и на сервере
+(один модуль инлайнится в страницу), поэтому результат сопоставим с блоками выше.</p>
+
+<div id="dropzone" class="dropzone">
+  <b>Перетащите изображения сюда</b>
+  <span class="dim">или нажмите, чтобы выбрать · можно несколько сразу</span>
+  <input type="file" id="fileinput" accept="image/*" multiple hidden>
+</div>
+<div id="upsummary" class="upsummary" hidden></div>
+<div id="upresults"></div>
+
+<div class="note">
+<b>Важно: браузерный кодировщик слабее серверного.</b> Canvas отдаёт WebP примерно втрое тяжелее,
+чем sharp на том же изображении и том же качестве — на этой картинке около <b>1 КБ</b> против
+<b>335 B</b> в блоках выше. Разница не в алгоритме плейсхолдера, а в самом кодеке:
+у <code>canvas.toDataURL</code> нет ни настроек метода сжатия, ни выбора пресета.
+<br><br>
+Практический вывод для сервиса загрузки: <b>браузер годится для предпросмотра, кодировать должен сервер.</b>
+Отсюда же следует, что «посчитать плейсхолдер на клиенте и прислать готовым» — плохая идея:
+получите втрое больший вес и никакого контроля над качеством.
+<br><br>
+С «одним числом» тоньше. Упаковка бит здесь буквально та же функция, что на сервере, но <i>выборка
+пикселей</i> другая: у canvas свой ресемплер, у sharp — свой. На части снимков число совпадает с
+серверным до единицы, на части отличается на один шаг квантования. Для 20 бит это норма, а не дефект:
+на глаз разница неразличима. Но если вам нужна побитовая воспроизводимость — считайте на сервере.
+</div>
+
+<h2>Сравнение</h2>
+<div class="tablewrap">
+<table>
+  <thead><tr><th>Техника</th><th>Вес в разметке</th><th>Меньше оригинала</th><th>Нужен JS</th><th>Что это</th></tr></thead>
+  <tbody>
+<tr class="rec">
+  <td>base64 LQIP</td>
+  <td class="num">335 B</td>
+  <td class="num"><b class="pct">в 240× меньше</b></td>
+  <td><span class="chip chip-nojs">нет</span></td>
+  <td class="dim">WebP 20 px, q40</td>
+</tr>
+<tr>
+  <td>Доминирующий цвет</td>
+  <td class="num">7 B</td>
+  <td class="num"><b class="pct">в 11 600× меньше</b></td>
+  <td><span class="chip chip-nojs">нет</span></td>
+  <td class="dim">один hex, нижняя граница</td>
+</tr>
+<tr>
+  <td>Одно число (CSS-only)</td>
+  <td class="num">6 B</td>
+  <td class="num"><b class="pct">в 13 500× меньше</b></td>
+  <td><span class="chip chip-nojs">нет</span></td>
+  <td class="dim">метод Lean Rada, 20 бит</td>
+</tr>
+<tr>
+  <td>CSS-градиенты</td>
+  <td class="num">1.5 КБ</td>
+  <td class="num"><b class="pct">в 53× меньше</b></td>
+  <td><span class="chip chip-nojs">нет</span></td>
+  <td class="dim">16 radial-gradient из сетки 4×4</td>
+</tr>
+<tr>
+  <td>SVG-сетка</td>
+  <td class="num">2.8 КБ</td>
+  <td class="num"><b class="pct">в 28× меньше</b></td>
+  <td><span class="chip chip-nojs">нет</span></td>
+  <td class="dim">plaiceholder .svg, 6×6 + блюр</td>
+</tr>
+<tr>
+  <td>ThumbHash</td>
+  <td class="num">175 B<br><span class="dim">сам хэш 28 B<br>декод в PNG 4.2 КБ</span></td>
+  <td class="num"><b class="pct">в 460× меньше</b></td>
+  <td><span class="chip chip-js">да</span></td>
+  <td class="dim">хэш 21 B → SSR-декод → WebP</td>
+</tr>
+<tr>
+  <td>BlurHash</td>
+  <td class="num">171 B<br><span class="dim">сам хэш 36 B<br>декод в PNG 4.8 КБ</span></td>
+  <td class="num"><b class="pct">в 470× меньше</b></td>
+  <td><span class="chip chip-js">да</span></td>
+  <td class="dim">36 симв. → SSR-декод → WebP</td>
+</tr>
+  </tbody>
+</table>
+</div>
+
+<div class="note">
+<b>Осторожно с цифрами хэшей — их легко сравнить нечестно.</b>
+Библиотеки отдают декод в <b>PNG</b> (4.2 КБ у ThumbHash и 4.8 КБ у BlurHash).
+Это формат без потерь, и ставить его рядом с WebP-плейсхолдером значит сравнивать кодеки, а не техники.
+Пересжимаем декод в WebP тем же качеством — и получается 175 B и 171 B.
+Именно эти числа стоят в таблице выше.
+</div>
+
+<div class="note">
+<b>И тогда главный вывод переворачивается: в байтах разметки спора нет.</b>
+После честного пересжатия хэши дают 175 B–171 B,
+а base64 LQIP сопоставимой детализации — 195 B на 12 px и
+151 B на 8 px (лестница ниже). Это паритет: хэши сильнее сглажены,
+поэтому лучше жмутся, но и деталей несут меньше. Выбирать по весу HTML тут не из чего.
+<br><br>
+Разница в другом, и она операционная. <b>LQIP</b> требует только sharp один раз при загрузке файла.
+<b>Хэш</b> требует библиотеку на обоих концах и шаг декодирования на каждый рендер — зато в базе,
+в JSON API и в мобильном клиенте он занимает 28 B вместо ~200 B.
+Клиентский декод — единственный случай, когда хэш реально экономит байты HTML, но тогда плейсхолдер
+появляется после исполнения JS, то есть уже после первого пейнта, и в SSR теряет смысл.
+</div>
+
+<div class="note">
+<b>Про «одно число» и цвет.</b> В опубликованной спецификации оси цветности кодируются в диапазоне ±0.35 —
+он рассчитан на насыщенные цвета. Но у <i>среднего</i> цвета фотографии цветность почти всегда мала:
+на этих снимках |a| и |b| выходят 0,01…0,08, а шаг квантования при ±0.35 равен 0.0875. Весь цвет умещается
+внутри одного шага, и плейсхолдер схлопывается в нейтрально-серый. Здесь диапазон сужен до ±0.12 (шаг 0.03)
+одновременно в кодере и в CSS-декодере — они генерируются из одной константы, поэтому всегда согласованы.
+Плата: такой CSS несовместим с чужим, написанным под исходный диапазон.
+</div>
+
+<h2>Размен: размер уменьшенной копии</h2>
+<p>WebP, качество 40. Видно, где узнаваемость перестаёт расти вместе с весом.</p>
+<div class="minis">
+<figure class="mini mini-ref">
+  <div class="frame" style="aspect-ratio:1200 / 1697">
+    <div class="ph" style="background-image:url('img/main.webp');background-size:cover"></div>
+  </div>
+  <figcaption><b>оригинал</b><span class="bytes">79 КБ</span></figcaption>
+  <div class="card-pct dim">для сверки</div>
+</figure>
+<figure class="mini">
+  <div class="frame" style="aspect-ratio:1200 / 1697">
+    <div class="ph blur" style="background-image:url('data:image/webp;base64,UklGRlYAAABXRUJQVlA4IEoAAADQAQCdASoIAAsAA4BaJQBOgCHh+lCiJAD+muybPdiMEe+JZpbpWNzsFN715/VkFmN2oWnNejET04bZGiQTkDZBt4HdJ0CwlAAAAA==');background-size:cover"></div>
+  </div>
+  <figcaption><b>8 px</b><span class="bytes">151 B</span></figcaption>
+  <div class="card-pct"><span class="pct">в 540× меньше</span></div>
+</figure>
+<figure class="mini">
+  <div class="frame" style="aspect-ratio:1200 / 1697">
+    <div class="ph blur" style="background-image:url('data:image/webp;base64,UklGRngAAABXRUJQVlA4IGwAAADwAwCdASoMABEAPu1iqU2ppaQiMAgBMB2JQBOmUABeQIxiwZT67jwAAP7HIsC/2HYntgO2tLghBXw3EhbIo+yoxz7tyKguBzmiixU5GSn99vel5ys+96W9C2WER+rWREHQsl2ytcDOEZrgAAA=');background-size:cover"></div>
+  </div>
+  <figcaption><b>12 px</b><span class="bytes">195 B</span></figcaption>
+  <div class="card-pct"><span class="pct">в 420× меньше</span></div>
+</figure>
+<figure class="mini">
+  <div class="frame" style="aspect-ratio:1200 / 1697">
+    <div class="ph blur" style="background-image:url('data:image/webp;base64,UklGRqgAAABXRUJQVlA4IJwAAACQBACdASoQABcAPu1iqU2ppaOiMAgBMB2JQBOmUGSxiFHrM3oyGa1/hQI3hgAA/tauJLD7PgB03XbBFpvF2Tbyak0AVYLkU0HxPrKebh07yreaw8esJVpJi5KE9a6pCdMamHIPm29/l7mKDNZslrmnKyOq4780jqIZr1zvqIzbHojF9tmhImX4Quw+dA3ySdz1sqvDd+/hTpxIAAA=');background-size:cover"></div>
+  </div>
+  <figcaption><b>16 px</b><span class="bytes">259 B</span></figcaption>
+  <div class="card-pct"><span class="pct">в 310× меньше</span></div>
+</figure>
+<figure class="mini">
+  <div class="frame" style="aspect-ratio:1200 / 1697">
+    <div class="ph blur" style="background-image:url('data:image/webp;base64,UklGRiwBAABXRUJQVlA4ICABAACQBgCdASoYACIAPu1srlIppaQiqrgIATAdiWMAt7gftf5t+R9R6sVAVET3YFBXYRuKdjWaAeMGWBpVgu/AAP7hPR5gocZgZ+Xhc1mQSrC6eLGGiyoE46UH+j/GhfVYlju0y3JuNbAKJzMBX6v/Y+1IqpbtpSCTDwH8bYGs3BH+CHPh3FSqiEGuNYEwaBeUTEHhMkOR9hqeHp6jfe+9L3JgzU0kbq5id7AgijqQXUqcH2uBhiIh5JkbWsrwIsJEUGsX2kqHqzYASJp2bp3WedbTrWDN/N7wunl8TgQUhrPq5NvwmR6PaBm85y53NhbM7HTcqulvOUqOw7F15R242oN3XmR5FGJOd8ELwTXoLRlfRchIFATcQKtKyXnEDVgAAAA=');background-size:cover"></div>
+  </div>
+  <figcaption><b>24 px</b><span class="bytes">435 B</span></figcaption>
+  <div class="card-pct"><span class="pct">в 190× меньше</span></div>
+</figure>
+<figure class="mini">
+  <div class="frame" style="aspect-ratio:1200 / 1697">
+    <div class="ph blur" style="background-image:url('data:image/webp;base64,UklGRooBAABXRUJQVlA4IH4BAAAwCACdASogAC0APu1qsFEppaSipWsxMB2JQBdmdOeoDTlAVIvrhcunz+1ZABmMu+kfC65BXqscPLkiF5oeXKs4jTjeT5q+26kXgAD+8kV54zDEgn6Y1Qbv3lWoQFuo/fQ4ei5Hndc5GzbNsbc8ux5Cy6HnIQMrGWs4EYir0Gi1K9jZOgMgkcpSe4I3uSKIYL0GlnL/JzSDxpSkwDGtB1ttC/6fcpzlCJIZ4r/RiRvktAcEkVYNKqPoCSztWylKuNkbQnOHgF9SUL85fbX4+JyXH0WBrnel+LXiOiO1lri58WD0teUVWxZihXhJSNTJemdVpmfSUM8TQhgYPosJ+E23dF9begu6HRxZpAouhUfqzmNxcmAn8QoElT07OeZPlMAC9cUEVHIL0gqYCF957w/2qkgYuTMUjq7uHEEYdmmvZoXya/P3ZkagkmOmkKrhkkEVstP0EzfHFVfDhSGidfo3Lc/OaIKT24d8M9q8a5NmsZHPy4IJQqb3NfOtnAAA');background-size:cover"></div>
+  </div>
+  <figcaption><b>32 px</b><span class="bytes">559 B</span></figcaption>
+  <div class="card-pct"><span class="pct">в 140× меньше</span></div>
+</figure>
+</div>
+
+<h2>Размен: кодек</h2>
+<p>Одинаковые 20 px, сопоставимое качество. AVIF на таких крошечных размерах
+обычно проигрывает — заголовок контейнера съедает выигрыш кодека.</p>
+<div class="minis">
+<figure class="mini mini-ref">
+  <div class="frame" style="aspect-ratio:1200 / 1697">
+    <div class="ph" style="background-image:url('img/main.webp');background-size:cover"></div>
+  </div>
+  <figcaption><b>оригинал</b><span class="bytes">79 КБ</span></figcaption>
+  <div class="card-pct dim">для сверки</div>
+</figure>
+<figure class="mini">
+  <div class="frame" style="aspect-ratio:1200 / 1697">
+    <div class="ph blur" style="background-image:url('data:image/webp;base64,UklGRuIAAABXRUJQVlA4INYAAACwBQCdASoUABwAPu1kqk2ppaQiMAgBMB2JQBafP/wGK2eHXTb7hBjq+xXcC857loxaCudmDwgA/tZ4XXh0RbLI4LesGj+/qm6Mi01cvqP6pMp72xHZr6wDf3wz2e29i9a5+g453gWsSnLl/xiPV7fkc220jEdNeNzY9zeZ8Wm303UcsnddBkzPnOaMj6FldZ/xLx+a9Eheku9DLwEPVm9ueoCCUFgMj2Oisp9Dbx2gnR5DHbUDCyyB9B+woY7VePml7PmKa67TeS6EiD6QJHP6Ho+tQAAA');background-size:cover"></div>
+  </div>
+  <figcaption><b>WEBP</b><span class="bytes">335 B</span></figcaption>
+  <div class="card-pct"><span class="pct">в 240× меньше</span></div>
+</figure>
+<figure class="mini">
+  <div class="frame" style="aspect-ratio:1200 / 1697">
+    <div class="ph blur" style="background-image:url('data:image/jpeg;base64,/9j/2wBDABcQERQRDhcUEhQaGBcbIjklIh8fIkYyNSk5UkhXVVFIUE5bZoNvW2F8Yk5QcptzfIeLkpSSWG2grJ+OqoOPko3/2wBDARgaGiIeIkMlJUONXlBejY2NjY2NjY2NjY2NjY2NjY2NjY2NjY2NjY2NjY2NjY2NjY2NjY2NjY2NjY2NjY2NjY3/wAARCAAcABQDASIAAhEBAxEB/8QAGgAAAgIDAAAAAAAAAAAAAAAAAAMEBQECBv/EACMQAAICAQQCAgMAAAAAAAAAAAECAxEABBIhQQUxE1FhgZH/xAAXAQEBAQEAAAAAAAAAAAAAAAACAQAD/8QAGREBAQEBAQEAAAAAAAAAAAAAABEBMSFR/9oADAMBAAIRAxEAPwCx1syppgD6P1kI6TRuF+Ww55Ft3j9qSyxiblF5rr95maWH5yY1jcqLG3kr+MG9dM+ExyQ6bdHGwK3fu8Mp9VOrTt8SBQvBrs94ZKzokVJIRuumvuu6xem8Vo030GN9b/X8AyRACjsFZtoHAvgYnx0sjmQvIzUeLN1jnsTeNk8T49V5gonnljhkkyMQCa9fWGOBH//Z');background-size:cover"></div>
+  </div>
+  <figcaption><b>JPEG</b><span class="bytes">607 B</span></figcaption>
+  <div class="card-pct"><span class="pct">в 130× меньше</span></div>
+</figure>
+<figure class="mini">
+  <div class="frame" style="aspect-ratio:1200 / 1697">
+    <div class="ph blur" style="background-image:url('data:image/avif;base64,AAAAHGZ0eXBhdmlmAAAAAG1pZjFhdmlmbWlhZgAAANZtZXRhAAAAAAAAACFoZGxyAAAAAAAAAABwaWN0AAAAAAAAAAAAAAAAAAAAAA5waXRtAAAAAAABAAAAImlsb2MAAAAAREAAAQABAAAAAAD6AAEAAAAAAAAAtQAAACNpaW5mAAAAAAABAAAAFWluZmUCAAAAAAEAAGF2MDEAAAAAVmlwcnAAAAA4aXBjbwAAAAxhdjFDgSACAAAAABRpc3BlAAAAAAAAABQAAAAcAAAAEHBpeGkAAAAAAwgICAAAABZpcG1hAAAAAAAAAAEAAQOBAgMAAAC9bWRhdBIACgg4ESe2EBDQaTKmARpAAABQz6OMPOctGNGr/G+E0el3TDQWfgnyX6C1RKlCNU0P30hgZqqm6hNBlf5UQ460985dqUoEotqgNwOxCeOqeDbRa8B1NSsDM+j6K8cdt+mW/xOENsbQuM+JxIPgy5FyaG1hZIJYpn8pSkpzSm58fD3wRUXobELKg77jkE0Aoldy35Ktnuukeo7MgXqAX6fvniuZRGzHwxVIIufJxDYB5ex9akA=');background-size:cover"></div>
+  </div>
+  <figcaption><b>AVIF</b><span class="bytes">599 B</span></figcaption>
+  <div class="card-pct"><span class="pct">в 140× меньше</span></div>
+</figure>
+</div>
+
+<h2>Из чего состоит base64 LQIP</h2>
+<p>Никакой магии, четыре шага. Ничего не декодируется скриптом — всё делает сам браузер.</p>
+
+<div class="pipe">
+  <div class="pipe-lane">
+    <ol class="lane-steps">
+      <li><b>Уменьшаем оригинал до 20 px по ширине.</b>
+        1200×1697 → 20×28.
+        Это уже не изображение, а «пятно цвета» — но пятно правильное.</li>
+      <li><b>Кодируем в WebP с качеством 40.</b>
+        Получается 234 B двоичных данных.</li>
+      <li><b>Переводим в base64.</b> Текст на треть длиннее двоичного —
+        итого 335 B вместе с префиксом <code>data:image/webp;base64,</code>.</li>
+      <li><b>Кладём фоном на сам <code>&lt;img&gt;</code></b> с <code>background-size:cover</code>.
+        Браузер растягивает 20 пикселей на всю ширину блока — и <b>размытие получается само собой</b>,
+        просто из-за сглаживания при увеличении. Отдельный <code>filter:blur()</code> нужен лишь для того,
+        чтобы спрятать квадратики на краях.</li>
+    </ol>
+  </div>
+</div>
+
+<p>Когда настоящий файл догрузился, браузер рисует его <b>поверх</b> фона — тот остаётся под картинкой.
+Подменять ничего не надо, JS не участвует. Побочная польза: если картинка не загрузится вовсе,
+на месте останется размытое пятно, а не битая иконка.</p>
+
+<h2>Плейсхолдер и srcset уживаются, SEO не страдает</h2>
+
+<p>Это разные роли, и они не конкурируют. <b>srcset</b> — список настоящих файлов, из которых браузер
+выбирает <i>один</i> под экран и плотность пикселей. <b>Плейсхолдер</b> — то, что видно, пока выбранный файл едет.
+Технически data-URI в <code>srcset</code> вписать можно, но это ошибка по смыслу: браузер возьмёт его
+как окончательную картинку и на узком экране навсегда покажет размытое пятно вместо фотографии.</p>
+
+<p>Правильная разметка — обычный <code>&lt;img&gt;</code>, где плейсхолдер живёт в <code>style</code>,
+и <b>ничего для SEO не теряется</b>:</p>
+
+<pre><code>&lt;img
+  src=&quot;photo-1280.webp&quot;
+  srcset=&quot;photo-320.webp   320w,
+          photo-640.webp   640w,
+          photo-1280.webp 1280w,
+          photo-2560.webp 2560w&quot;
+  sizes=&quot;(max-width: 700px) 100vw, 640px&quot;
+  width=&quot;1200&quot; height=&quot;1697&quot;
+  alt=&quot;Осмысленное описание картинки&quot;
+  decoding=&quot;async&quot;
+  style=&quot;background-image:url('data:image/webp;base64,…');
+         background-size:cover&quot;&gt;</code></pre>
+
+<p>Здесь есть всё, что индексируется: настоящий тег <code>&lt;img&gt;</code>, <code>src</code>,
+<code>srcset</code> и <code>alt</code>. Атрибут <code>style</code> для поиска по картинкам — просто оформление,
+он не конкурирует с <code>src</code> и не мешает индексации.</p>
+
+<h3 style="margin-top:32px">Почему нельзя просто положить его в srcset</h3>
+
+<p>Соблазн понятный: раз это картинка, пусть будет ещё одним кандидатом. Но <b>srcset выбирает
+ровно один вариант и показывает только его</b>. Это механизм выбора разрешения, а не очерёдности:
+в нём вообще нет измерения «время». Напишем так:</p>
+
+<pre><code>&lt;!-- так делать не надо --&gt;
+&lt;img srcset=&quot;data:image/webp;base64,…   20w,
+             photo-1280.webp          1280w&quot;
+     sizes=&quot;640px&quot;&gt;</code></pre>
+
+<p>Браузер считает: под слот нужно ~640 px, кандидаты 20w и 1280w, беру 1280w.
+<b>Плейсхолдер не покажется никогда</b> — он просто лежит мёртвым весом в HTML.
+А если слот всё-таки окажется уже 20 px, браузер возьмёт размытое пятно и оставит его
+насовсем: «догрузить получше» srcset не умеет.</p>
+
+<div class="note">
+<b>Суть в том, что нужны два слоя, а не два кандидата.</b>
+У одного и того же <code>&lt;img&gt;</code> фон и содержимое — <b>разные слои отрисовки</b>.
+Фон это inline-данные, рисуется мгновенно, без сетевого запроса. Содержимое приезжает по сети
+и рисуется <i>поверх</i>. Два слоя дают последовательность: сначала пятно, потом фотография.
+<br><br>
+<code>srcset</code> же — один слой и один выбор. По той же причине не помогут ни
+<code>&lt;picture&gt;</code> с <code>&lt;source&gt;</code>, ни CSS-функция <code>image-set()</code>:
+все трое отвечают на вопрос «какой файл взять», а не «что показать, пока он едет».
+</div>
+
+<p>Ближайшее, что умеет сам формат, — <b>прогрессивный JPEG</b>: один файл, который проявляется
+по мере прихода байтов. Но он не спасает от главного, ради чего всё затевалось: пока не пришёл
+первый байт, показывать всё равно нечего. Плейсхолдер работает <i>до</i> начала загрузки — потому
+он и должен быть уже в HTML.</p>
+
+<div class="note">
+<b>Откуда взялся миф про SEO.</b> Регресс возникает не от плейсхолдера, а от <b>подмены самого тега</b>:
+если настоящую картинку показывать как <code>&lt;div style="background-image:url(photo.webp)"&gt;</code>,
+то нет ни <code>alt</code>, ни <code>srcset</code>, и поиск по картинкам такое не индексирует.
+Плейсхолдер фоном <b>на <code>&lt;img&gt;</code></b> — совсем другое дело: тег остаётся полноценным.
+Правило простое: <b>фоном может быть только плейсхолдер, но никогда — сам контент.</b>
+</div>
+
+<div class="note">
+<b>Две ловушки, о которых узнаёшь поздно.</b>
+<ul style="margin:8px 0 0">
+  <li><b>Прозрачность.</b> У PNG с альфа-каналом фон будет просвечивать сквозь прозрачные места
+      и после загрузки. Для таких изображений плейсхолдер либо не нужен, либо снимается по <code>load</code>.</li>
+  <li><b><code>object-fit</code>.</b> Если на картинке стоит <code>object-fit:contain</code>, содержимое
+      займёт не всю рамку, а фон растянут на всю — по краям останется размытая полоса.
+      Держите <code>background-size</code> согласованным с <code>object-fit</code>.</li>
+</ul>
+</div>
+
+<h2>Как это вставлять</h2>
+<p>Плейсхолдер вешается фоном на <b>сам <code>&lt;img&gt;</code></b>, а не в соседний <code>&lt;div&gt;</code>:
+не нужен лишний элемент, и при загрузке картинка накрывает фон без мигания.
+Атрибуты <code>width</code>/<code>height</code> обязательны — без них будет сдвиг вёрстки, и весь смысл теряется.</p>
+<section class="detail">
+  <div class="detail-visual">
+    <div class="frame" style="aspect-ratio:1200 / 1697"><div class="ph blur" style="background-image:url('data:image/webp;base64,UklGRuIAAABXRUJQVlA4INYAAACwBQCdASoUABwAPu1kqk2ppaQiMAgBMB2JQBafP/wGK2eHXTb7hBjq+xXcC857loxaCudmDwgA/tZ4XXh0RbLI4LesGj+/qm6Mi01cvqP6pMp72xHZr6wDf3wz2e29i9a5+g453gWsSnLl/xiPV7fkc220jEdNeNzY9zeZ8Wm303UcsnddBkzPnOaMj6FldZ/xLx+a9Eheku9DLwEPVm9ueoCCUFgMj2Oisp9Dbx2gnR5DHbUDCyyB9B+woY7VePml7PmKa67TeS6EiD6QJHP6Ho+tQAAA');background-size:cover"></div></div>
+  </div>
+  <div class="detail-body">
+    <h3>base64 LQIP <span class="bytes">335 B</span> <span class="pct">в 240× меньше</span></h3>
+    <p class="dim">WebP 20 px, q40 · рисуется первым пейнтом, без JS</p>
+    <pre><code>&lt;img src=&quot;photo.webp&quot; width=&quot;1200&quot; height=&quot;1697&quot;
+     style=&quot;background-image:url('data:image/webp;base64,UklGRuIAAABXRUJQVlA4INYAA…');
+            background-size:cover&quot;&gt;</code></pre>
+  </div>
+</section>
+<section class="detail">
+  <div class="detail-visual">
+    <div class="frame" style="aspect-ratio:1200 / 1697"><div class="ph" style="background-color:#b19b95"></div></div>
+  </div>
+  <div class="detail-body">
+    <h3>Доминирующий цвет <span class="bytes">7 B</span> <span class="pct">в 11 600× меньше</span></h3>
+    <p class="dim">один hex, нижняя граница · рисуется первым пейнтом, без JS</p>
+    <pre><code>&lt;img src=&quot;photo.webp&quot; width=&quot;1200&quot; height=&quot;1697&quot;
+     style=&quot;background-color:#b19b95&quot;&gt;</code></pre>
+  </div>
+</section>
+<section class="detail">
+  <div class="detail-visual">
+    <div class="frame" style="aspect-ratio:1200 / 1697"><div class="ph ph-lqip-int" style="--lqip:442348;--lqip-fallback:#d6b6a8"></div></div>
+  </div>
+  <div class="detail-body">
+    <h3>Одно число (CSS-only) <span class="bytes">6 B</span> <span class="pct">в 13 500× меньше</span></h3>
+    <p class="dim">метод Lean Rada, 20 бит · рисуется первым пейнтом, без JS</p>
+    <pre><code>&lt;!-- декодер CSS подключается один раз на всё приложение --&gt;
+&lt;img src=&quot;photo.webp&quot; width=&quot;1200&quot; height=&quot;1697&quot;
+     class=&quot;ph-lqip-int&quot; style=&quot;--lqip:442348&quot;&gt;</code></pre>
+  </div>
+</section>
+<section class="detail">
+  <div class="detail-visual">
+    <div class="frame" style="aspect-ratio:1200 / 1697"><div class="ph" style="background-color:#b19b95;background-image:radial-gradient(25% 25% at 12.5% 12.5%, rgb(207 195 204 / 1) 0%, rgb(207 195 204 / 0) 100%), radial-gradient(25% 25% at 37.5% 12.5%, rgb(159 131 114 / 1) 0%, rgb(159 131 114 / 0) 100%), radial-gradient(25% 25% at 62.5% 12.5%, rgb(156 130 114 / 1) 0%, rgb(156 130 114 / 0) 100%), radial-gradient(25% 25% at 87.5% 12.5%, rgb(156 131 114 / 1) 0%, rgb(156 131 114 / 0) 100%), radial-gradient(25% 25% at 12.5% 37.5%, rgb(181 156 152 / 1) 0%, rgb(181 156 152 / 0) 100%), radial-gradient(25% 25% at 37.5% 37.5%, rgb(178 159 149 / 1) 0%, rgb(178 159 149 / 0) 100%), radial-gradient(25% 25% at 62.5% 37.5%, rgb(180 145 130 / 1) 0%, rgb(180 145 130 / 0) 100%), radial-gradient(25% 25% at 87.5% 37.5%, rgb(137 107 92 / 1) 0%, rgb(137 107 92 / 0) 100%), radial-gradient(25% 25% at 12.5% 62.5%, rgb(187 160 152 / 1) 0%, rgb(187 160 152 / 0) 100%), radial-gradient(25% 25% at 37.5% 62.5%, rgb(175 153 145 / 1) 0%, rgb(175 153 145 / 0) 100%), radial-gradient(25% 25% at 62.5% 62.5%, rgb(160 143 136 / 1) 0%, rgb(160 143 136 / 0) 100%), radial-gradient(25% 25% at 87.5% 62.5%, rgb(127 124 122 / 1) 0%, rgb(127 124 122 / 0) 100%), radial-gradient(25% 25% at 12.5% 87.5%, rgb(185 164 171 / 1) 0%, rgb(185 164 171 / 0) 100%), radial-gradient(25% 25% at 37.5% 87.5%, rgb(203 183 180 / 1) 0%, rgb(203 183 180 / 0) 100%), radial-gradient(25% 25% at 62.5% 87.5%, rgb(205 193 196 / 1) 0%, rgb(205 193 196 / 0) 100%), radial-gradient(25% 25% at 87.5% 87.5%, rgb(222 220 230 / 1) 0%, rgb(222 220 230 / 0) 100%)"></div></div>
+  </div>
+  <div class="detail-body">
+    <h3>CSS-градиенты <span class="bytes">1.5 КБ</span> <span class="pct">в 53× меньше</span></h3>
+    <p class="dim">16 radial-gradient из сетки 4×4 · рисуется первым пейнтом, без JS</p>
+    <pre><code>&lt;img src=&quot;photo.webp&quot; width=&quot;1200&quot; height=&quot;1697&quot;
+     style=&quot;background-color:#b19b95;background-image:
+       radial-gradient(25% 25% at 12.5% 12.5%, rgb(207 195 204 / 1) 0%, rgb(207 195 204 / 0) 100%),
+       radial-gradient(25% 25% at 37.5% 12.5%, rgb(159 131 114 / 1) 0%, rgb(159 131 114 / 0) 100%),
+       /* … ещё 14 таких же слоя, по одному на ячейку сетки */&quot;&gt;</code></pre>
+  </div>
+</section>
+<section class="detail">
+  <div class="detail-visual">
+    <div class="frame" style="aspect-ratio:1200 / 1697"><div class="ph" style="background-image:url('data:image/svg+xml;base64,PHN2ZyB4bWxucz0iaHR0cDovL3d3dy53My5vcmcvMjAwMC9zdmciIHZpZXdCb3g9IjAgMCA2IDYiIHByZXNlcnZlQXNwZWN0UmF0aW89Im5vbmUiPjxmaWx0ZXIgaWQ9ImIiPjxmZUdhdXNzaWFuQmx1ciBzdGREZXZpYXRpb249IjAuNiIvPjwvZmlsdGVyPjxnIGZpbHRlcj0idXJsKCNiKSI+PHJlY3QgeD0iMCIgeT0iMCIgd2lkdGg9IjEiIGhlaWdodD0iMSIgZmlsbD0iI2QxYzVkNSIvPjxyZWN0IHg9IjEiIHk9IjAiIHdpZHRoPSIxIiBoZWlnaHQ9IjEiIGZpbGw9IiNjZmI5YjciLz48cmVjdCB4PSIyIiB5PSIwIiB3aWR0aD0iMSIgaGVpZ2h0PSIxIiBmaWxsPSIjOTg3ZDZhIi8+PHJlY3QgeD0iMyIgeT0iMCIgd2lkdGg9IjEiIGhlaWdodD0iMSIgZmlsbD0iIzlhODA3MCIvPjxyZWN0IHg9IjQiIHk9IjAiIHdpZHRoPSIxIiBoZWlnaHQ9IjEiIGZpbGw9IiM4ZTc0NjQiLz48cmVjdCB4PSI1IiB5PSIwIiB3aWR0aD0iMSIgaGVpZ2h0PSIxIiBmaWxsPSIjOWQ4NDc0Ii8+PHJlY3QgeD0iMCIgeT0iMSIgd2lkdGg9IjEiIGhlaWdodD0iMSIgZmlsbD0iI2M3YmFjNSIvPjxyZWN0IHg9IjEiIHk9IjEiIHdpZHRoPSIxIiBoZWlnaHQ9IjEiIGZpbGw9IiNhMzg3NzgiLz48cmVjdCB4PSIyIiB5PSIxIiB3aWR0aD0iMSIgaGVpZ2h0PSIxIiBmaWxsPSIjYTc4ZTdmIi8+PHJlY3QgeD0iMyIgeT0iMSIgd2lkdGg9IjEiIGhlaWdodD0iMSIgZmlsbD0iI2JkOWU5MSIvPjxyZWN0IHg9IjQiIHk9IjEiIHdpZHRoPSIxIiBoZWlnaHQ9IjEiIGZpbGw9IiNjOGE3OWEiLz48cmVjdCB4PSI1IiB5PSIxIiB3aWR0aD0iMSIgaGVpZ2h0PSIxIiBmaWxsPSIjOWE3ZjZmIi8+PHJlY3QgeD0iMCIgeT0iMiIgd2lkdGg9IjEiIGhlaWdodD0iMSIgZmlsbD0iI2FlOTg5OSIvPjxyZWN0IHg9IjEiIHk9IjIiIHdpZHRoPSIxIiBoZWlnaHQ9IjEiIGZpbGw9IiNhYjhjN2UiLz48cmVjdCB4PSIyIiB5PSIyIiB3aWR0aD0iMSIgaGVpZ2h0PSIxIiBmaWxsPSIjY2JjNWMwIi8+PHJlY3QgeD0iMyIgeT0iMiIgd2lkdGg9IjEiIGhlaWdodD0iMSIgZmlsbD0iI2IxOTA4MyIvPjxyZWN0IHg9IjQiIHk9IjIiIHdpZHRoPSIxIiBoZWlnaHQ9IjEiIGZpbGw9IiNhZDgwNzIiLz48cmVjdCB4PSI1IiB5PSIyIiB3aWR0aD0iMSIgaGVpZ2h0PSIxIiBmaWxsPSIjNjQ0OTM4Ii8+PHJlY3QgeD0iMCIgeT0iMyIgd2lkdGg9IjEiIGhlaWdodD0iMSIgZmlsbD0iI2JhOWI5NyIvPjxyZWN0IHg9IjEiIHk9IjMiIHdpZHRoPSIxIiBoZWlnaHQ9IjEiIGZpbGw9IiNjM2ExOTUiLz48cmVjdCB4PSIyIiB5PSIzIiB3aWR0aD0iMSIgaGVpZ2h0PSIxIiBmaWxsPSIjOTg4MDc0Ii8+PHJlY3QgeD0iMyIgeT0iMyIgd2lkdGg9IjEiIGhlaWdodD0iMSIgZmlsbD0iIzgzNmQ1ZiIvPjxyZWN0IHg9IjQiIHk9IjMiIHdpZHRoPSIxIiBoZWlnaHQ9IjEiIGZpbGw9IiM5OTgxN2EiLz48cmVjdCB4PSI1IiB5PSIzIiB3aWR0aD0iMSIgaGVpZ2h0PSIxIiBmaWxsPSIjNTU0ZjQ3Ii8+PHJlY3QgeD0iMCIgeT0iNCIgd2lkdGg9IjEiIGhlaWdodD0iMSIgZmlsbD0iI2JkYTI5YyIvPjxyZWN0IHg9IjEiIHk9IjQiIHdpZHRoPSIxIiBoZWlnaHQ9IjEiIGZpbGw9IiNjNmI5YmQiLz48cmVjdCB4PSIyIiB5PSI0IiB3aWR0aD0iMSIgaGVpZ2h0PSIxIiBmaWxsPSIjYmNhZWFjIi8+PHJlY3QgeD0iMyIgeT0iNCIgd2lkdGg9IjEiIGhlaWdodD0iMSIgZmlsbD0iI2MyYjliNiIvPjxyZWN0IHg9IjQiIHk9IjQiIHdpZHRoPSIxIiBoZWlnaHQ9IjEiIGZpbGw9IiNjNmQyZGMiLz48cmVjdCB4PSI1IiB5PSI0IiB3aWR0aD0iMSIgaGVpZ2h0PSIxIiBmaWxsPSIjY2VkOWUyIi8+PHJlY3QgeD0iMCIgeT0iNSIgd2lkdGg9IjEiIGhlaWdodD0iMSIgZmlsbD0iI2I0OWJhNSIvPjxyZWN0IHg9IjEiIHk9IjUiIHdpZHRoPSIxIiBoZWlnaHQ9IjEiIGZpbGw9IiNjZmI0YjEiLz48cmVjdCB4PSIyIiB5PSI1IiB3aWR0aD0iMSIgaGVpZ2h0PSIxIiBmaWxsPSIjYmZhNmExIi8+PHJlY3QgeD0iMyIgeT0iNSIgd2lkdGg9IjEiIGhlaWdodD0iMSIgZmlsbD0iI2JiYTZhNiIvPjxyZWN0IHg9IjQiIHk9IjUiIHdpZHRoPSIxIiBoZWlnaHQ9IjEiIGZpbGw9IiNkNGNmZDYiLz48cmVjdCB4PSI1IiB5PSI1IiB3aWR0aD0iMSIgaGVpZ2h0PSIxIiBmaWxsPSIjZDNjZWQ3Ii8+PC9nPjwvc3ZnPg==');background-size:100% 100%"></div></div>
+  </div>
+  <div class="detail-body">
+    <h3>SVG-сетка <span class="bytes">2.8 КБ</span> <span class="pct">в 28× меньше</span></h3>
+    <p class="dim">plaiceholder .svg, 6×6 + блюр · рисуется первым пейнтом, без JS</p>
+    <pre><code>&lt;img src=&quot;photo.webp&quot; width=&quot;1200&quot; height=&quot;1697&quot;
+     style=&quot;background-image:url('data:image/svg+xml;base64,…');background-size:100% 100%&quot;&gt;</code></pre>
+  </div>
+</section>
+<section class="detail">
+  <div class="detail-visual">
+    <div class="frame" style="aspect-ratio:1200 / 1697"><div class="ph blur" style="background-image:url('data:image/webp;base64,UklGRmoAAABXRUJQVlA4IF4AAACQBACdASoXACAAPuFepU2opSOiN/VYARAcCWMApaw+gMgMqe2bOFKOCbndCSQA/tV1lpm3ITzFOsLf41ssGD6eeOvKN/MUzPG9zJU4Ep8RCx4B6smZvdiV8ek4wAAA');background-size:cover"></div></div>
+  </div>
+  <div class="detail-body">
+    <h3>ThumbHash <span class="bytes">175 B</span> <span class="pct">в 460× меньше</span></h3>
+    <p class="dim">хэш 21 B → SSR-декод → WebP · требует JS-декодер</p>
+    <pre><code>// в БД лежит только это — 21 B:
+// aCgGDQKNStCo6sVWqsHHRycvw/RA
+
+// на сервере при SSR: хэш → пиксели → WebP (175 B)
+import { thumbHashToRGBA } from 'thumbhash'
+const { rgba, w, h } = thumbHashToRGBA(Buffer.from(hash, 'base64'))
+const webp = await sharp(Buffer.from(rgba), { raw: { width: w, height: h, channels: 4 } })
+  .webp({ quality: 40 }).toBuffer()
+
+// thumbHashToDataURL() тоже есть, но отдаёт PNG — 4290 B</code></pre>
+  </div>
+</section>
+<section class="detail">
+  <div class="detail-visual">
+    <div class="frame" style="aspect-ratio:1200 / 1697"><div class="ph blur" style="background-image:url('data:image/webp;base64,UklGRmYAAABXRUJQVlA4IFoAAACQBACdASogAC4APulipE2zJaMyMAqqYB0JZQDGQBujH2uYNCgKbxrIwis+OAAA/t7oUd43khWozpcdwlgGfgYdCOk1vtYPvlbblPKdLrpp2x1Mn6Z8STwiAAA=');background-size:cover"></div></div>
+  </div>
+  <div class="detail-body">
+    <h3>BlurHash <span class="bytes">171 B</span> <span class="pct">в 470× меньше</span></h3>
+    <p class="dim">36 симв. → SSR-декод → WebP · требует JS-декодер</p>
+    <pre><code>// в БД лежит только это — 36 симв.:
+// UELDoo^lXC-X8^.Toz%2?vM|-=T0TK$*%MR%
+
+// на сервере при SSR: хэш → пиксели → WebP (171 B)
+import { decode } from 'blurhash'
+const rgba = decode(hash, 32, 45)
+const webp = await sharp(Buffer.from(rgba), { raw: { width: 32, height: 45, channels: 4 } })
+  .webp({ quality: 40 }).toBuffer()</code></pre>
+  </div>
+</section>
+
+<h2>На других изображениях</h2>
+<p class="dim">Слева оригинал, дальше — доминирующий цвет, одно число, CSS-градиенты, base64 LQIP.</p>
+<div class="other">
+  <div class="other-grid">
+    <figure class="mini"><div class="frame" style="aspect-ratio:1200 / 800">
+      <div class="ph" style="background-image:url('img/03.jpg');background-size:cover"></div>
+    </div><figcaption><b>оригинал</b><span class="bytes">94 КБ</span></figcaption>
+    <div class="card-pct dim">×1</div></figure>
+    <figure class="mini"><div class="frame" style="aspect-ratio:1200 / 800"><div class="ph blur" style="background-image:url('data:image/webp;base64,UklGRm4AAABXRUJQVlA4IGIAAAAQBACdASoUAA0APu1iqU2ppaOiMAgBMB2JagCdMoMYAEkzXqnqgCrbsAD+dw0PP8/27rBluKpAUVIrJTGtPinuNtUx/lBD/Zx1GRRHOIHpV0GTTspV0eOhuhiPOB/isWgAAA==');background-size:cover"></div></div>
+      <figcaption><b>base64 LQIP</b><span class="bytes">183 B</span></figcaption>
+      <div class="card-pct"><span class="pct">в 530× меньше</span></div></figure>
+    <figure class="mini"><div class="frame" style="aspect-ratio:1200 / 800"><div class="ph" style="background-color:#4b8cb7"></div></div>
+      <figcaption><b>Доминирующий цвет</b><span class="bytes">7 B</span></figcaption>
+      <div class="card-pct"><span class="pct">в 13 800× меньше</span></div></figure>
+    <figure class="mini"><div class="frame" style="aspect-ratio:1200 / 800"><div class="ph ph-lqip-int" style="--lqip:178832;--lqip-fallback:#3289b8"></div></div>
+      <figcaption><b>Одно число (CSS-only)</b><span class="bytes">6 B</span></figcaption>
+      <div class="card-pct"><span class="pct">в 16 100× меньше</span></div></figure>
+    <figure class="mini"><div class="frame" style="aspect-ratio:1200 / 800"><div class="ph" style="background-color:#4b8cb7;background-image:radial-gradient(25% 25% at 12.5% 12.5%, rgb(4 110 173 / 1) 0%, rgb(4 110 173 / 0) 100%), radial-gradient(25% 25% at 37.5% 12.5%, rgb(10 105 171 / 1) 0%, rgb(10 105 171 / 0) 100%), radial-gradient(25% 25% at 62.5% 12.5%, rgb(40 108 170 / 1) 0%, rgb(40 108 170 / 0) 100%), radial-gradient(25% 25% at 87.5% 12.5%, rgb(2 95 167 / 1) 0%, rgb(2 95 167 / 0) 100%), radial-gradient(25% 25% at 12.5% 37.5%, rgb(55 138 194 / 1) 0%, rgb(55 138 194 / 0) 100%), radial-gradient(25% 25% at 37.5% 37.5%, rgb(77 132 164 / 1) 0%, rgb(77 132 164 / 0) 100%), radial-gradient(25% 25% at 62.5% 37.5%, rgb(82 131 166 / 1) 0%, rgb(82 131 166 / 0) 100%), radial-gradient(25% 25% at 87.5% 37.5%, rgb(0 119 191 / 1) 0%, rgb(0 119 191 / 0) 100%), radial-gradient(25% 25% at 12.5% 62.5%, rgb(119 165 210 / 1) 0%, rgb(119 165 210 / 0) 100%), radial-gradient(25% 25% at 37.5% 62.5%, rgb(126 148 166 / 1) 0%, rgb(126 148 166 / 0) 100%), radial-gradient(25% 25% at 62.5% 62.5%, rgb(80 138 172 / 1) 0%, rgb(80 138 172 / 0) 100%), radial-gradient(25% 25% at 87.5% 62.5%, rgb(27 145 208 / 1) 0%, rgb(27 145 208 / 0) 100%), radial-gradient(25% 25% at 12.5% 87.5%, rgb(171 194 212 / 1) 0%, rgb(171 194 212 / 0) 100%), radial-gradient(25% 25% at 37.5% 87.5%, rgb(154 164 167 / 1) 0%, rgb(154 164 167 / 0) 100%), radial-gradient(25% 25% at 62.5% 87.5%, rgb(125 153 174 / 1) 0%, rgb(125 153 174 / 0) 100%), radial-gradient(25% 25% at 87.5% 87.5%, rgb(112 174 216 / 1) 0%, rgb(112 174 216 / 0) 100%)"></div></div>
+      <figcaption><b>CSS-градиенты</b><span class="bytes">1.5 КБ</span></figcaption>
+      <div class="card-pct"><span class="pct">в 64× меньше</span></div></figure>
+  </div>
+</div>
+<div class="other">
+  <div class="other-grid">
+    <figure class="mini"><div class="frame" style="aspect-ratio:1200 / 800">
+      <div class="ph" style="background-image:url('img/04.jpg');background-size:cover"></div>
+    </div><figcaption><b>оригинал</b><span class="bytes">160 КБ</span></figcaption>
+    <div class="card-pct dim">×1</div></figure>
+    <figure class="mini"><div class="frame" style="aspect-ratio:1200 / 800"><div class="ph blur" style="background-image:url('data:image/webp;base64,UklGRpYAAABXRUJQVlA4IIoAAACQBACdASoUAA0APu1iqU2ppaOiMAgBMB2JbACdMoRwN6AAU3R/kmD79ymO34AA/vK0rnnq1vTTG/NyINh++mQojT0NldCbQ8l6h4y4HUZaoJhiEgXQvNRnPRi2+g4KtOHcvY+ohQgJKsB/oOHIimTfbzFjytERWvRFa8tTljGHOBpuMIhyO2UAAAA=');background-size:cover"></div></div>
+      <figcaption><b>base64 LQIP</b><span class="bytes">235 B</span></figcaption>
+      <div class="card-pct"><span class="pct">в 700× меньше</span></div></figure>
+    <figure class="mini"><div class="frame" style="aspect-ratio:1200 / 800"><div class="ph" style="background-color:#7a3a10"></div></div>
+      <figcaption><b>Доминирующий цвет</b><span class="bytes">7 B</span></figcaption>
+      <div class="card-pct"><span class="pct">в 23 500× меньше</span></div></figure>
+    <figure class="mini"><div class="frame" style="aspect-ratio:1200 / 800"><div class="ph ph-lqip-int" style="--lqip:-435594;--lqip-fallback:#723400"></div></div>
+      <figcaption><b>Одно число (CSS-only)</b><span class="bytes">7 B</span></figcaption>
+      <div class="card-pct"><span class="pct">в 23 500× меньше</span></div></figure>
+    <figure class="mini"><div class="frame" style="aspect-ratio:1200 / 800"><div class="ph" style="background-color:#7a3a10;background-image:radial-gradient(25% 25% at 12.5% 12.5%, rgb(20 10 5 / 1) 0%, rgb(20 10 5 / 0) 100%), radial-gradient(25% 25% at 37.5% 12.5%, rgb(63 18 1 / 1) 0%, rgb(63 18 1 / 0) 100%), radial-gradient(25% 25% at 62.5% 12.5%, rgb(88 29 2 / 1) 0%, rgb(88 29 2 / 0) 100%), radial-gradient(25% 25% at 87.5% 12.5%, rgb(84 48 23 / 1) 0%, rgb(84 48 23 / 0) 100%), radial-gradient(25% 25% at 12.5% 37.5%, rgb(50 21 5 / 1) 0%, rgb(50 21 5 / 0) 100%), radial-gradient(25% 25% at 37.5% 37.5%, rgb(110 76 49 / 1) 0%, rgb(110 76 49 / 0) 100%), radial-gradient(25% 25% at 62.5% 37.5%, rgb(163 88 22 / 1) 0%, rgb(163 88 22 / 0) 100%), radial-gradient(25% 25% at 87.5% 37.5%, rgb(173 83 8 / 1) 0%, rgb(173 83 8 / 0) 100%), radial-gradient(25% 25% at 12.5% 62.5%, rgb(137 47 8 / 1) 0%, rgb(137 47 8 / 0) 100%), radial-gradient(25% 25% at 37.5% 62.5%, rgb(176 104 47 / 1) 0%, rgb(176 104 47 / 0) 100%), radial-gradient(25% 25% at 62.5% 62.5%, rgb(183 98 21 / 1) 0%, rgb(183 98 21 / 0) 100%), radial-gradient(25% 25% at 87.5% 62.5%, rgb(184 78 6 / 1) 0%, rgb(184 78 6 / 0) 100%), radial-gradient(25% 25% at 12.5% 87.5%, rgb(128 46 8 / 1) 0%, rgb(128 46 8 / 0) 100%), radial-gradient(25% 25% at 37.5% 87.5%, rgb(123 45 7 / 1) 0%, rgb(123 45 7 / 0) 100%), radial-gradient(25% 25% at 62.5% 87.5%, rgb(138 66 17 / 1) 0%, rgb(138 66 17 / 0) 100%), radial-gradient(25% 25% at 87.5% 87.5%, rgb(142 61 14 / 1) 0%, rgb(142 61 14 / 0) 100%)"></div></div>
+      <figcaption><b>CSS-градиенты</b><span class="bytes">1.4 КБ</span></figcaption>
+      <div class="card-pct"><span class="pct">в 110× меньше</span></div></figure>
+  </div>
+</div>
+<div class="other">
+  <div class="other-grid">
+    <figure class="mini"><div class="frame" style="aspect-ratio:1200 / 800">
+      <div class="ph" style="background-image:url('img/05.jpg');background-size:cover"></div>
+    </div><figcaption><b>оригинал</b><span class="bytes">175 КБ</span></figcaption>
+    <div class="card-pct dim">×1</div></figure>
+    <figure class="mini"><div class="frame" style="aspect-ratio:1200 / 800"><div class="ph blur" style="background-image:url('data:image/webp;base64,UklGRo4AAABXRUJQVlA4IIIAAADQAwCdASoUAA0APu1iqU2ppaQiMAgBMB2JbACdDBOwMZBqridrgNAA/scnNeDMogwRqoK1T9Qy3mZ7uN+yp2qOZzRTpd4QovdTfNsDs+UXnu/O4262TzriCg1v9yFhMW1vnPplVEdeaqBMqb4fMfoyoBC56oWXt3XuPmHlMXq1gAAA');background-size:cover"></div></div>
+      <figcaption><b>base64 LQIP</b><span class="bytes">223 B</span></figcaption>
+      <div class="card-pct"><span class="pct">в 800× меньше</span></div></figure>
+    <figure class="mini"><div class="frame" style="aspect-ratio:1200 / 800"><div class="ph" style="background-color:#999776"></div></div>
+      <figcaption><b>Доминирующий цвет</b><span class="bytes">7 B</span></figcaption>
+      <div class="card-pct"><span class="pct">в 25 500× меньше</span></div></figure>
+    <figure class="mini"><div class="frame" style="aspect-ratio:1200 / 800"><div class="ph ph-lqip-int" style="--lqip:518821;--lqip-fallback:#8e7f56"></div></div>
+      <figcaption><b>Одно число (CSS-only)</b><span class="bytes">6 B</span></figcaption>
+      <div class="card-pct"><span class="pct">в 29 800× меньше</span></div></figure>
+    <figure class="mini"><div class="frame" style="aspect-ratio:1200 / 800"><div class="ph" style="background-color:#999776;background-image:radial-gradient(25% 25% at 12.5% 12.5%, rgb(206 199 132 / 1) 0%, rgb(206 199 132 / 0) 100%), radial-gradient(25% 25% at 37.5% 12.5%, rgb(211 203 135 / 1) 0%, rgb(211 203 135 / 0) 100%), radial-gradient(25% 25% at 62.5% 12.5%, rgb(211 202 128 / 1) 0%, rgb(211 202 128 / 0) 100%), radial-gradient(25% 25% at 87.5% 12.5%, rgb(209 204 153 / 1) 0%, rgb(209 204 153 / 0) 100%), radial-gradient(25% 25% at 12.5% 37.5%, rgb(187 183 108 / 1) 0%, rgb(187 183 108 / 0) 100%), radial-gradient(25% 25% at 37.5% 37.5%, rgb(180 178 110 / 1) 0%, rgb(180 178 110 / 0) 100%), radial-gradient(25% 25% at 62.5% 37.5%, rgb(194 179 92 / 1) 0%, rgb(194 179 92 / 0) 100%), radial-gradient(25% 25% at 87.5% 37.5%, rgb(199 192 147 / 1) 0%, rgb(199 192 147 / 0) 100%), radial-gradient(25% 25% at 12.5% 62.5%, rgb(72 83 93 / 1) 0%, rgb(72 83 93 / 0) 100%), radial-gradient(25% 25% at 37.5% 62.5%, rgb(87 99 104 / 1) 0%, rgb(87 99 104 / 0) 100%), radial-gradient(25% 25% at 62.5% 62.5%, rgb(115 107 96 / 1) 0%, rgb(115 107 96 / 0) 100%), radial-gradient(25% 25% at 87.5% 62.5%, rgb(113 107 113 / 1) 0%, rgb(113 107 113 / 0) 100%), radial-gradient(25% 25% at 12.5% 87.5%, rgb(100 99 91 / 1) 0%, rgb(100 99 91 / 0) 100%), radial-gradient(25% 25% at 37.5% 87.5%, rgb(115 114 105 / 1) 0%, rgb(115 114 105 / 0) 100%), radial-gradient(25% 25% at 62.5% 87.5%, rgb(117 117 108 / 1) 0%, rgb(117 117 108 / 0) 100%), radial-gradient(25% 25% at 87.5% 87.5%, rgb(102 102 93 / 1) 0%, rgb(102 102 93 / 0) 100%)"></div></div>
+      <figcaption><b>CSS-градиенты</b><span class="bytes">1.5 КБ</span></figcaption>
+      <div class="card-pct"><span class="pct">в 120× меньше</span></div></figure>
+  </div>
+</div>
+<div class="other">
+  <div class="other-grid">
+    <figure class="mini"><div class="frame" style="aspect-ratio:1200 / 800">
+      <div class="ph" style="background-image:url('img/06.jpg');background-size:cover"></div>
+    </div><figcaption><b>оригинал</b><span class="bytes">45 КБ</span></figcaption>
+    <div class="card-pct dim">×1</div></figure>
+    <figure class="mini"><div class="frame" style="aspect-ratio:1200 / 800"><div class="ph blur" style="background-image:url('data:image/webp;base64,UklGRmoAAABXRUJQVlA4IF4AAACQAwCdASoUAA0APu1kqU2ppaQiMAgBMB2JZwAAUooihfKK7vrIAP7W1xpyA2qMPDSi2skpZcYR3YpuFS+bRKNPIXW+yG9ucYuBuh1R/DrwK4ceN2ymofCTXmULQAAA');background-size:cover"></div></div>
+      <figcaption><b>base64 LQIP</b><span class="bytes">175 B</span></figcaption>
+      <div class="card-pct"><span class="pct">в 260× меньше</span></div></figure>
+    <figure class="mini"><div class="frame" style="aspect-ratio:1200 / 800"><div class="ph" style="background-color:#958e87"></div></div>
+      <figcaption><b>Доминирующий цвет</b><span class="bytes">7 B</span></figcaption>
+      <div class="card-pct"><span class="pct">в 6 600× меньше</span></div></figure>
+    <figure class="mini"><div class="frame" style="aspect-ratio:1200 / 800"><div class="ph ph-lqip-int" style="--lqip:514467;--lqip-fallback:#808080"></div></div>
+      <figcaption><b>Одно число (CSS-only)</b><span class="bytes">6 B</span></figcaption>
+      <div class="card-pct"><span class="pct">в 7 700× меньше</span></div></figure>
+    <figure class="mini"><div class="frame" style="aspect-ratio:1200 / 800"><div class="ph" style="background-color:#958e87;background-image:radial-gradient(25% 25% at 12.5% 12.5%, rgb(209 204 193 / 1) 0%, rgb(209 204 193 / 0) 100%), radial-gradient(25% 25% at 37.5% 12.5%, rgb(222 221 209 / 1) 0%, rgb(222 221 209 / 0) 100%), radial-gradient(25% 25% at 62.5% 12.5%, rgb(218 216 205 / 1) 0%, rgb(218 216 205 / 0) 100%), radial-gradient(25% 25% at 87.5% 12.5%, rgb(186 177 167 / 1) 0%, rgb(186 177 167 / 0) 100%), radial-gradient(25% 25% at 12.5% 37.5%, rgb(183 174 164 / 1) 0%, rgb(183 174 164 / 0) 100%), radial-gradient(25% 25% at 37.5% 37.5%, rgb(194 186 176 / 1) 0%, rgb(194 186 176 / 0) 100%), radial-gradient(25% 25% at 62.5% 37.5%, rgb(186 179 168 / 1) 0%, rgb(186 179 168 / 0) 100%), radial-gradient(25% 25% at 87.5% 37.5%, rgb(150 140 133 / 1) 0%, rgb(150 140 133 / 0) 100%), radial-gradient(25% 25% at 12.5% 62.5%, rgb(149 140 133 / 1) 0%, rgb(149 140 133 / 0) 100%), radial-gradient(25% 25% at 37.5% 62.5%, rgb(186 176 167 / 1) 0%, rgb(186 176 167 / 0) 100%), radial-gradient(25% 25% at 62.5% 62.5%, rgb(158 149 140 / 1) 0%, rgb(158 149 140 / 0) 100%), radial-gradient(25% 25% at 87.5% 62.5%, rgb(106 94 88 / 1) 0%, rgb(106 94 88 / 0) 100%), radial-gradient(25% 25% at 12.5% 87.5%, rgb(41 36 37 / 1) 0%, rgb(41 36 37 / 0) 100%), radial-gradient(25% 25% at 37.5% 87.5%, rgb(69 63 62 / 1) 0%, rgb(69 63 62 / 0) 100%), radial-gradient(25% 25% at 62.5% 87.5%, rgb(63 57 55 / 1) 0%, rgb(63 57 55 / 0) 100%), radial-gradient(25% 25% at 87.5% 87.5%, rgb(62 53 52 / 1) 0%, rgb(62 53 52 / 0) 100%)"></div></div>
+      <figcaption><b>CSS-градиенты</b><span class="bytes">1.5 КБ</span></figcaption>
+      <div class="card-pct"><span class="pct">в 31× меньше</span></div></figure>
+  </div>
+</div>
+
+<h2>Схема: как устроить загрузку и обработку</h2>
+<p>Главный вопрос — что делать в самом запросе загрузки, а что отложить. Ответ даётся замером
+(sharp, эта картинка 1200×1697, Node 26 на Apple Silicon):</p>
+
+<div class="bench">
+  <div class="bench-row"><span>метаданные (width/height)</span><b>0,3 мс</b><i style="width:1%"></i></div>
+  <div class="bench-row bench-fast"><span>плейсхолдер 20 px → WebP</span><b>10 мс</b><i style="width:1%"></i></div>
+  <div class="bench-row"><span>производная 320 px WebP</span><b>31 мс</b><i style="width:2%"></i></div>
+  <div class="bench-row"><span>производная 1280 px WebP</span><b>231 мс</b><i style="width:12%"></i></div>
+  <div class="bench-row bench-slow"><span>производная 1280 px AVIF</span><b>1991 мс</b><i style="width:100%"></i></div>
+</div>
+<p class="dim">AVIF дороже плейсхолдера почти в <b>200 раз</b>. Отсюда и проходит граница:
+плейсхолдер успевает посчитаться внутри запроса, тяжёлые производные — нет.</p>
+
+<div class="pipe">
+  <div class="pipe-lane lane-sync">
+    <div class="lane-head"><span class="lane-tag lane-tag-fast">синхронно</span>
+      в том же HTTP-запросе <b>~11 мс</b></div>
+    <ol class="lane-steps">
+      <li><b>Приём файла.</b> Проверка типа по сигнатуре, а не по расширению; лимит размера.</li>
+      <li><b>Оригинал → объектное хранилище</b> (S3/MinIO). Ключ по хешу содержимого — дубликаты бесплатны.</li>
+      <li><b>sharp:</b> метаданные + плейсхолдер 20 px WebP. Это те самые 10 мс.</li>
+      <li><b>Одна транзакция в БД:</b> ключ объекта, width, height и плейсхолдер пишутся вместе.</li>
+      <li><b>Ответ клиенту.</b> Запись уже пригодна к рендеру — производные не нужны.</li>
+    </ol>
+  </div>
+
+  <div class="pipe-arrow">ставим задачу в очередь ↓</div>
+
+  <div class="pipe-lane lane-async">
+    <div class="lane-head"><span class="lane-tag lane-tag-slow">асинхронно</span>
+      очередь воркеров <b>секунды</b></div>
+    <ol class="lane-steps" start="6">
+      <li><b>Производные размеры:</b> 320 / 640 / 1280 / 2560, WebP и AVIF.</li>
+      <li><b>Пометка в БД:</b> производные готовы. До этого момента отдаём оригинал —
+        плейсхолдер уже есть, клиент ничего не теряет.</li>
+    </ol>
+  </div>
+
+  <div class="pipe-arrow">↓</div>
+
+  <div class="pipe-lane lane-render">
+    <div class="lane-head"><span class="lane-tag">рендер</span> SSR, на каждый запрос страницы</div>
+    <ol class="lane-steps" start="8">
+      <li><b>Читаем строку из БД</b> — плейсхолдер уже лежит там строкой, считать нечего.</li>
+      <li><b>Отдаём <code>&lt;img&gt;</code></b> с плейсхолдером в <code>style</code> и с <code>width</code>/<code>height</code>.</li>
+      <li><b>Первый пейнт:</b> блюр виден сразу, вёрстка не прыгает, настоящий файл догружается следом.</li>
+    </ol>
+  </div>
+</div>
+
+<div class="note">
+<b>Четыре правила, которые ломаются чаще всего.</b>
+<ul style="margin:8px 0 0">
+  <li><b>Плейсхолдер и ключ объекта пишутся одной транзакцией.</b> Иначе гонка: страница успевает
+      отрендерить запись, у которой картинка есть, а плейсхолдера ещё нет — и весь эффект теряется
+      ровно на тех записях, что загружены только что.</li>
+  <li><b>width и height — в ту же строку.</b> Без них будет сдвиг вёрстки, и выигрыш от плейсхолдера
+      съедается подскоком контента.</li>
+  <li><b>Ничего не считается на рендере.</b> Плейсхолдер вычисляется один раз при загрузке. Если он
+      считается на запрос страницы, вы поменяли 10 мс один раз на 10 мс каждому посетителю.</li>
+  <li><b>Очередь не должна блокировать выдачу.</b> Пока производные не готовы, отдаём оригинал.
+      Страница, которая ждёт воркера, хуже страницы, которая отдала файл потяжелее.</li>
+</ul>
+</div>
+
+<h2>Выводы</h2>
+<ul>
+  <li><b>По умолчанию — base64 LQIP в WebP на 12–20 px</b> (195 B–335 B на эту картинку).
+      Ноль JS, рисуется первым пейнтом, из инструментов нужен только sharp при загрузке файла.
+      Берите его не потому, что он легче всех, а потому что он самый дешёвый в эксплуатации.</li>
+  <li><b>В весе разметки base64 LQIP и хэши идут вровень</b> — после честного пересжатия декода в WebP
+      разница в пределах нескольких десятков байт. Выбор между ними решается не байтами,
+      а тем, нужен ли вам компактный вид для БД, API и мобильного клиента.</li>
+  <li><b>Нужен настоящий минимум в разметке — «одно число»</b> (6 B, в 56× легче base64).
+      Декодер CSS подключается один раз на всё приложение, дальше каждая картинка стоит несколько символов.
+      Цена — грубая сетка 3×2 и современные браузеры (<code>mod()</code>, <code>round()</code>, <code>oklab()</code>).</li>
+  <li><b>Не берите CSS-градиенты и SVG ради экономии</b>: 1.5 КБ и 2.8 КБ —
+      это тяжелее base64 LQIP в 5–9 раза
+      при худшей детализации. У них своя ниша: не нужен растровый кодек и нужен плавный масштаб.</li>
+  <li>Плейсхолдер считается <b>один раз при загрузке файла</b> и хранится рядом с ним — колонкой в БД
+      или в метаданных объекта. Не на каждый запрос.</li>
+  <li>На длинных списках следите за бюджетом HTML: сто карточек по 335 B
+      это 33 КБ в документе. Первому экрану — base64, остальным — «одно число» или цвет.</li>
+  <li>LCP-картинку <b>не</b> помечайте <code>loading="lazy"</code> — ей <code>fetchpriority="high"</code>.
+      И <code>width</code>/<code>height</code> обязательны везде, иначе сдвиг вёрстки съест весь выигрыш.</li>
+</ul>
+
+<h2>Источники</h2>
+<ul class="dim">
+  <li><a href="https://www.mux.com/blog/blurry-image-placeholders-on-the-web">Mux — A clear look at blurry image placeholders on the web</a></li>
+  <li><a href="https://leanrada.com/notes/css-only-lqip/">Lean Rada — Minimal CSS-only blurry image placeholders</a></li>
+  <li><a href="https://evanw.github.io/thumbhash/">ThumbHash</a> · <a href="https://blurha.sh/">BlurHash</a></li>
+  <li><a href="https://plaiceholder.co/docs">plaiceholder</a> · <a href="https://github.com/transitive-bullshit/lqip-modern">lqip-modern</a> · <a href="https://unlazy.byjohann.dev/">unlazy</a></li>
+</ul>
+
+</div>
+<script>
+(function () {
+  var body = document.body;
+  var timer;
+
+  /** Задержка выбранного пресета — уже посчитана из веса файла на сборке страницы. */
+  function currentDelay() {
+    var checked = document.querySelector('input[name="speed"]:checked');
+    return checked ? Number(checked.dataset.delay) : 600;
+  }
+
+  function replay() {
+    clearTimeout(timer);
+    body.dataset.state = 'idle';
+    // Снимаем src, чтобы браузер заново показал плейсхолдер под картинкой.
+    document.querySelectorAll('img.real').forEach(function (img) {
+      img.removeAttribute('src');
+    });
+
+    timer = setTimeout(function () {
+      document.querySelectorAll('img.real').forEach(function (img) {
+        img.src = img.dataset.src;
+      });
+      body.dataset.state = 'loaded';
+    }, currentDelay());
+  }
+
+  document.getElementById('replay').addEventListener('click', replay);
+  document.querySelectorAll('input[name="speed"]').forEach(function (radio) {
+    radio.addEventListener('change', replay);
+  });
+  replay();
+})();
+</script>
+<script>
+(function () {
+/**
+ * Преобразования sRGB ↔ Oklab. Нужны для варианта «одно число» (CSS-only LQIP),
+ * где базовый цвет квантуется именно в Oklab — он перцептивно равномерен,
+ * поэтому грубое квантование по 2–3 бита не даёт резких скачков оттенка.
+ */
+
+/** Снимает гамма-коррекцию с одного канала sRGB (0..255) → линейный 0..1. */
+function srgbToLinear(c) {
+  const v = c / 255;
+  return v <= 0.04045 ? v / 12.92 : ((v + 0.055) / 1.055) ** 2.4;
+}
+
+/** Накладывает гамма-коррекцию: линейный 0..1 → канал sRGB 0..255. */
+function linearToSrgb(v) {
+  const c = v <= 0.0031308 ? v * 12.92 : 1.055 * v ** (1 / 2.4) - 0.055;
+  return Math.max(0, Math.min(255, Math.round(c * 255)));
+}
+
+/**
+ * Переводит цвет sRGB в координаты Oklab.
+ * @param r Красный канал, 0..255.
+ * @param g Зелёный канал, 0..255.
+ * @param b Синий канал, 0..255.
+ * @returns `{ L, a, b }`, где L — светлота 0..1, a/b — оси примерно −0.4..0.4.
+ */
+function rgbToOklab(r, g, b) {
+  const lr = srgbToLinear(r);
+  const lg = srgbToLinear(g);
+  const lb = srgbToLinear(b);
+
+  const l = Math.cbrt(0.4122214708 * lr + 0.5363325363 * lg + 0.0514459929 * lb);
+  const m = Math.cbrt(0.2119034982 * lr + 0.6806995451 * lg + 0.1073969566 * lb);
+  const s = Math.cbrt(0.0883024619 * lr + 0.2817188376 * lg + 0.6299787005 * lb);
+
+  return {
+    L: 0.2104542553 * l + 0.793617785 * m - 0.0040720468 * s,
+    a: 1.9779984951 * l - 2.428592205 * m + 0.4505937099 * s,
+    b: 0.0259040371 * l + 0.7827717662 * m - 0.808675766 * s,
+  };
+}
+
+/**
+ * Переводит координаты Oklab обратно в sRGB.
+ * @returns `{ r, g, b }` — каналы 0..255, обрезанные по границам гаммы.
+ */
+function oklabToRgb(L, a, b) {
+  const l = (L + 0.3963377774 * a + 0.2158037573 * b) ** 3;
+  const m = (L - 0.1055613458 * a - 0.0638541728 * b) ** 3;
+  const s = (L - 0.0894841775 * a - 1.291485548 * b) ** 3;
+
+  return {
+    r: linearToSrgb(4.0767416621 * l - 3.3077115913 * m + 0.2309699292 * s),
+    g: linearToSrgb(-1.2684380046 * l + 2.6097574011 * m - 0.3413193965 * s),
+    b: linearToSrgb(-0.0041960863 * l - 0.7034186147 * m + 1.707614701 * s),
+  };
+}
+
+/** Форматирует канал в двузначный hex. */
+const hex2 = (n) => n.toString(16).padStart(2, '0');
+
+/** Собирает `#rrggbb` из каналов 0..255. */
+function toHex(r, g, b) {
+  return `#${hex2(r)}${hex2(g)}${hex2(b)}`;
+}
+
+/**
+ * Формат «одного числа» (CSS-only LQIP): константы, упаковка бит и генератор
+ * CSS-декодера. Модуль намеренно чистый — только Math, никаких зависимостей,
+ * поэтому один и тот же код исполняется и в Node при сборке, и в браузере
+ * в интерактивной демке. Дублировать эту арифметику в двух местах нельзя:
+ * малейшее расхождение кодера и декодера даёт неверный цвет.
+ */
+
+/** Смещение хранения: 20-битное значение кладётся в диапазон [−2^19, 2^19−1]. */
+const OFFSET = 2 ** 19;
+
+/** Светлота ячейки/базы отображается в этот отрезок Oklab L при декоде. */
+const L_MIN = 0.2;
+const L_RANGE = 0.6;
+
+/**
+ * Полуширина диапазона осей цветности a/b.
+ *
+ * ОТКЛОНЕНИЕ ОТ СПЕЦИФИКАЦИИ, осознанное. У Рады диапазон ±0.35 — он рассчитан на
+ * насыщенные цвета. Но у СРЕДНЕГО цвета фотографии цветность почти всегда мала:
+ * замеры на реальных снимках дают |a|,|b| ≈ 0.01…0.08, тогда как шаг квантования
+ * при ±0.35 равен 0.0875. То есть весь цвет фотографии умещается внутри одного
+ * шага и схлопывается в нейтрально-серый — плейсхолдер теряет оттенок.
+ *
+ * Сужение до ±0.12 даёт шаг 0.03 и попадает в реальный разброс фотографий.
+ * Кодер и CSS-декодер генерируются из этой константы, поэтому всегда согласованы;
+ * несовместимо с чужим CSS, написанным под исходный диапазон.
+ */
+const C_HALF = 0.12;
+const C_RANGE = C_HALF * 2;
+
+/** Зажимает значение в отрезок. */
+function clamp(v, min, max) {
+  return Math.max(min, Math.min(max, v));
+}
+
+/** Квантует светлоту Oklab в 2 бита (0..3) по шкале декодера. */
+function quantL(L) {
+  return clamp(Math.round(((L - L_MIN) / L_RANGE) * 3), 0, 3);
+}
+
+/**
+ * Упаковывает базовый цвет и шесть ячеек яркости в одно 20-битное число.
+ * @param baseLab Средний цвет всего изображения в Oklab: `{ L, a, b }`.
+ * @param cellLs Массив из шести значений светлоты Oklab, сетка 3×2 слева направо.
+ * @returns `{ value, ll, aaa, bbb, cells }`; value — то самое число для `--lqip`.
+ */
+function packLqip(baseLab, cellLs) {
+  const ll = quantL(baseLab.L);
+  const aaa = clamp(Math.round(((baseLab.a + C_HALF) / C_RANGE) * 8), 0, 7);
+  const bbb = clamp(Math.round(((baseLab.b + C_HALF) / C_RANGE) * 8 - 1), 0, 7);
+  const cells = cellLs.map(quantL);
+
+  // ca занимает старшие биты 18–19, дальше вниз до bbb в битах 0–2.
+  const packed =
+    (cells[0] << 18) | (cells[1] << 16) | (cells[2] << 14) |
+    (cells[3] << 12) | (cells[4] << 10) | (cells[5] << 8) |
+    (ll << 6) | (aaa << 3) | bbb;
+
+  return { value: packed - OFFSET, ll, aaa, bbb, cells };
+}
+
+/** Разворачивает квантованный базовый цвет обратно в координаты Oklab. */
+function unpackBaseLab(ll, aaa, bbb) {
+  return {
+    L: (ll / 3) * L_RANGE + L_MIN,
+    a: (aaa / 8) * C_RANGE - C_HALF,
+    b: ((bbb + 1) / 8) * C_RANGE - C_HALF,
+  };
+}
+
+/** Центры шести ячеек сетки 3×2 в процентах — позиции радиальных градиентов. */
+const CELL_POS = [
+  ['16.67%', '25%'], ['50%', '25%'], ['83.33%', '25%'],
+  ['16.67%', '75%'], ['50%', '75%'], ['83.33%', '75%'],
+];
+
+/** Имена распакованных ячеек в порядке следования битов. */
+const CELL_VARS = ['ca', 'cb', 'cc', 'cd', 'ce', 'cf'];
+
+/**
+ * Возвращает статический CSS-декодер — один блок на всё приложение.
+ * Каждой картинке дальше нужно только `style="--lqip:<число>"`.
+ * @returns Строка CSS.
+ */
+function lqipIntDecoderCss() {
+  const layers = CELL_VARS.map((name, i) => {
+    const [x, y] = CELL_POS[i];
+    const l = `calc(var(--_${name}) / 3 * ${L_RANGE} + ${L_MIN})`;
+    const stop = (alpha) => `oklab(${l} var(--_a) var(--_b) / ${alpha})`;
+    return `    radial-gradient(50% 75% at ${x} ${y}, ${stop(1)} 0%, ${stop(0)} 100%)`;
+  }).join(',\n');
+
+  return `@property --lqip {
+  syntax: "<number>";
+  inherits: true;
+  initial-value: 0;
+}
+
+.ph-lqip-int {
+  /* Разворачиваем 20-битное число: сдвиг вправо это деление, маска — mod(). */
+  --_v: calc(var(--lqip) + ${OFFSET});
+  --_ca: mod(round(down, calc(var(--_v) / 262144)), 4);
+  --_cb: mod(round(down, calc(var(--_v) / 65536)), 4);
+  --_cc: mod(round(down, calc(var(--_v) / 16384)), 4);
+  --_cd: mod(round(down, calc(var(--_v) / 4096)), 4);
+  --_ce: mod(round(down, calc(var(--_v) / 1024)), 4);
+  --_cf: mod(round(down, calc(var(--_v) / 256)), 4);
+  --_ll: mod(round(down, calc(var(--_v) / 64)), 4);
+  --_aaa: mod(round(down, calc(var(--_v) / 8)), 8);
+  --_bbb: mod(var(--_v), 8);
+
+  /* Цветность общая на всю картинку, меняется только светлота по ячейкам.
+     Диапазон ±${C_HALF} вместо ±0.35 из спецификации — см. комментарий в lqip-format.mjs. */
+  --_a: calc(var(--_aaa) / 8 * ${C_RANGE} - ${C_HALF});
+  --_b: calc((var(--_bbb) + 1) / 8 * ${C_RANGE} - ${C_HALF});
+
+  /* Первое объявление — запасное, для браузеров без mod()/round()/oklab():
+     там второе объявление невалидно и отбрасывается целиком. */
+  background-color: var(--lqip-fallback, #9a9a9a);
+  background-color: oklab(calc(var(--_ll) / 3 * ${L_RANGE} + ${L_MIN}) var(--_a) var(--_b));
+  background-image:
+${layers};
+}
+`;
+}
+
+/**
+ * Интерактивная демка: пользователь бросает свои изображения на страницу,
+ * браузер прямо здесь считает лучший вариант плейсхолдера и показывает результат.
+ *
+ * Исполняется ТОЛЬКО в браузере. Модуль инлайнится в страницу вместе с
+ * `oklab.mjs` и `lqip-format.mjs` — то есть арифметика ровно та же, что на сервере,
+ * и цифры в демке сходятся с цифрами в статических блоках выше.
+ *
+ * Доступные из инлайна символы: rgbToOklab, oklabToRgb, toHex, packLqip, unpackBaseLab.
+ */
+
+/** Ширина уменьшенной копии для base64 LQIP. Компромисс вес/узнаваемость. */
+const LQIP_WIDTH = 20;
+
+/** Качество WebP для плейсхолдера. */
+const LQIP_QUALITY = 0.4;
+
+/** Вес строки в байтах — считаем так же, как на сервере. */
+const byteLen = (s) => new Blob([s]).size;
+
+/** Форматирует байты. */
+const fmtBytes = (n) => (n < 1024 ? `${n} B` : `${(n / 1024).toFixed(1)} КБ`);
+
+/** Во сколько раз меньше оригинала. */
+function timesLess(bytes, total) {
+  const t = total / bytes;
+  const n =
+    t >= 1000 ? Math.round(t / 100) * 100
+    : t >= 100 ? Math.round(t / 10) * 10
+    : t >= 10 ? Math.round(t)
+    : Number(t.toFixed(1));
+  return `в ${n.toLocaleString('ru-RU').replace(/ /g, ' ')}× меньше`;
+}
+
+/** Ширина промежуточной копии, с которой снимаются все выборки. */
+const MID_WIDTH = 96;
+
+/**
+ * Декодирует файл ОДИН раз и отдаёт промежуточную уменьшенную копию.
+ *
+ * Один декод на файл — принципиально: каждый вызов `createImageBitmap(file)`
+ * заново разжимает весь исходник, и три вызова ради трёх выборок давали
+ * по три четверти секунды на снимок. Промежуток в 96 px достаточно мелкий,
+ * чтобы дальнейшие уменьшения были дешёвыми, и достаточно крупный, чтобы
+ * усреднение до 20 px и 3×2 оставалось осмысленным.
+ *
+ * @param file Исходный File.
+ * @returns `{ canvas, data, width, height }` промежуточной копии.
+ */
+async function toMid(file) {
+  const bitmap = await createImageBitmap(file);
+  const w = Math.min(MID_WIDTH, bitmap.width);
+  const h = Math.max(1, Math.round((w * bitmap.height) / bitmap.width));
+
+  const canvas = document.createElement('canvas');
+  canvas.width = w;
+  canvas.height = h;
+  const ctx = canvas.getContext('2d', { willReadFrequently: true });
+  ctx.imageSmoothingQuality = 'high';
+  ctx.drawImage(bitmap, 0, 0, w, h);
+  bitmap.close();
+
+  return { canvas, data: ctx.getImageData(0, 0, w, h).data, width: w, height: h };
+}
+
+/**
+ * Уменьшает промежуточную копию до нужного размера.
+ * @param mid Результат toMid().
+ * @param w Ширина результата.
+ * @param h Высота результата.
+ * @returns `{ canvas, data }`, где data — RGBA-массив.
+ */
+function shrink(mid, w, h) {
+  const canvas = document.createElement('canvas');
+  canvas.width = w;
+  canvas.height = h;
+  const ctx = canvas.getContext('2d', { willReadFrequently: true });
+  ctx.imageSmoothingQuality = 'high';
+  ctx.drawImage(mid.canvas, 0, 0, w, h);
+  return { canvas, data: ctx.getImageData(0, 0, w, h).data };
+}
+
+/** Средний цвет по всем пикселям RGBA-массива. */
+function averageRgb(data) {
+  let r = 0;
+  let g = 0;
+  let b = 0;
+  const n = data.length / 4;
+  for (let i = 0; i < data.length; i += 4) {
+    r += data[i];
+    g += data[i + 1];
+    b += data[i + 2];
+  }
+  return { r: Math.round(r / n), g: Math.round(g / n), b: Math.round(b / n) };
+}
+
+/**
+ * Считает все варианты плейсхолдера для одного изображения.
+ * @param file Исходный File.
+ * @param img Загруженный HTMLImageElement — только ради размеров и превью.
+ * @returns Объект с data URI, числом «одного числа», доминирующим цветом и таймингами.
+ */
+async function encode(file, img) {
+  const t0 = performance.now();
+  const originalBytes = file.size;
+
+  const ratio = img.naturalHeight / img.naturalWidth;
+  const lqipH = Math.max(1, Math.round(LQIP_WIDTH * ratio));
+
+  const mid = await toMid(file);
+  const small = shrink(mid, LQIP_WIDTH, lqipH);
+  const grid = shrink(mid, 3, 2);
+
+  // 1. base64 LQIP — рекомендованный вариант.
+  let dataUri = small.canvas.toDataURL('image/webp', LQIP_QUALITY);
+  // Safari до 16 не умеет кодировать WebP и молча отдаёт PNG — тогда берём JPEG.
+  const isWebp = dataUri.startsWith('data:image/webp');
+  if (!isWebp) dataUri = small.canvas.toDataURL('image/jpeg', 0.35);
+
+  // 2. Доминирующий цвет: усреднение по всей промежуточной копии точнее,
+  // чем уменьшение до 1×1 средствами drawImage.
+  const avg = averageRgb(mid.data);
+  const hex = toHex(avg.r, avg.g, avg.b);
+
+  // 3. «Одно число» — сетка 3×2 плюс средний цвет.
+  const cellLs = [];
+  for (let i = 0; i < 6; i += 1) {
+    const o = i * 4;
+    cellLs.push(rgbToOklab(grid.data[o], grid.data[o + 1], grid.data[o + 2]).L);
+  }
+  const packed = packLqip(rgbToOklab(avg.r, avg.g, avg.b), cellLs);
+  const lab = unpackBaseLab(packed.ll, packed.aaa, packed.bbb);
+  const fallback = oklabToRgb(lab.L, lab.a, lab.b);
+
+  const ms = performance.now() - t0;
+
+  return {
+    dataUri,
+    format: isWebp ? 'WebP' : 'JPEG',
+    lqipBytes: byteLen(dataUri),
+    hex,
+    hexBytes: byteLen(hex),
+    lqipInt: packed.value,
+    lqipIntBytes: byteLen(String(packed.value)),
+    lqipIntFallback: toHex(fallback.r, fallback.g, fallback.b),
+    width: img.naturalWidth,
+    height: img.naturalHeight,
+    originalBytes,
+    ms,
+  };
+}
+
+/** Живые object URL текущей пачки — освобождаются при следующей загрузке. */
+let liveUrls = [];
+
+/** Освобождает object URL предыдущей пачки. */
+function releaseUrls() {
+  liveUrls.forEach(URL.revokeObjectURL);
+  liveUrls = [];
+}
+
+/**
+ * Загружает File в HTMLImageElement.
+ *
+ * Object URL НЕ освобождается сразу после onload: он же используется как превью
+ * оригинала в выдаче. Освобождение перенесено на начало следующей пачки.
+ */
+function loadImage(file) {
+  return new Promise((resolve, reject) => {
+    const url = URL.createObjectURL(file);
+    liveUrls.push(url);
+    const img = new Image();
+    img.onload = () => resolve(img);
+    img.onerror = () => reject(new Error('не удалось прочитать файл'));
+    img.src = url;
+  });
+}
+
+/** Экранирует текст для вставки в HTML. */
+const esc = (s) =>
+  String(s).replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;').replace(/"/g, '&quot;');
+
+/** Рисует результат для одного файла. */
+function renderResult(file, r, objectUrl) {
+  const snippet = `<img src="${esc(file.name)}" width="${r.width}" height="${r.height}"
+     style="background-image:url('${r.dataUri.slice(0, 40)}…');background-size:cover">`;
+
+  return `<div class="up-item">
+  <div class="up-name">${esc(file.name)} <span class="dim">${r.width}×${r.height} · ${fmtBytes(r.originalBytes)}</span></div>
+  <div class="up-grid">
+    <figure class="mini">
+      <div class="frame" style="aspect-ratio:${r.width} / ${r.height}">
+        <div class="ph" style="background-image:url('${objectUrl}');background-size:cover"></div>
+      </div>
+      <figcaption><b>оригинал</b><span class="bytes">${fmtBytes(r.originalBytes)}</span></figcaption>
+      <div class="card-pct dim">для сверки</div>
+    </figure>
+    <figure class="mini mini-best">
+      <div class="frame" style="aspect-ratio:${r.width} / ${r.height}">
+        <div class="ph blur" style="background-image:url('${r.dataUri}');background-size:cover"></div>
+      </div>
+      <figcaption><b>base64 LQIP</b><span class="bytes">${fmtBytes(r.lqipBytes)}</span></figcaption>
+      <div class="card-pct">${timesLess(r.lqipBytes, r.originalBytes)}</div>
+    </figure>
+    <figure class="mini">
+      <div class="frame" style="aspect-ratio:${r.width} / ${r.height}">
+        <div class="ph ph-lqip-int" style="--lqip:${r.lqipInt};--lqip-fallback:${r.lqipIntFallback}"></div>
+      </div>
+      <figcaption><b>одно число</b><span class="bytes">${fmtBytes(r.lqipIntBytes)}</span></figcaption>
+      <div class="card-pct">${timesLess(r.lqipIntBytes, r.originalBytes)}</div>
+    </figure>
+    <figure class="mini">
+      <div class="frame" style="aspect-ratio:${r.width} / ${r.height}">
+        <div class="ph" style="background-color:${r.hex}"></div>
+      </div>
+      <figcaption><b>цвет</b><span class="bytes">${fmtBytes(r.hexBytes)}</span></figcaption>
+      <div class="card-pct">${timesLess(r.hexBytes, r.originalBytes)}</div>
+    </figure>
+  </div>
+  <div class="up-meta">
+    <span class="up-stat">обработано за <b>${r.ms.toFixed(0)} мс</b></span>
+    <span class="up-stat">формат <b>${r.format}</b></span>
+    <span class="up-stat">число: <code>${r.lqipInt}</code></span>
+    <span class="up-stat">цвет: <code>${r.hex}</code></span>
+  </div>
+  <pre><code>${esc(snippet)}</code></pre>
+</div>`;
+}
+
+/** Подключает дропзону и обработку файлов. */
+function initUploader() {
+  const zone = document.getElementById('dropzone');
+  const input = document.getElementById('fileinput');
+  const out = document.getElementById('upresults');
+  const summary = document.getElementById('upsummary');
+  if (!zone || !input || !out) return;
+
+  async function handle(files) {
+    const list = [...files].filter((f) => f.type.startsWith('image/'));
+    if (!list.length) return;
+
+    releaseUrls();
+    out.innerHTML = '<p class="dim">считаю…</p>';
+    const started = performance.now();
+    const html = [];
+    let totalIn = 0;
+    let totalOut = 0;
+    let encodeMs = 0;
+
+    for (const file of list) {
+      try {
+        const img = await loadImage(file);
+        const r = await encode(file, img);
+        totalIn += r.originalBytes;
+        totalOut += r.lqipBytes;
+        encodeMs += r.ms;
+        html.push(renderResult(file, r, img.src));
+      } catch (err) {
+        html.push(`<div class="up-item"><b>${esc(file.name)}</b> — ${esc(err.message)}</div>`);
+      }
+    }
+
+    out.innerHTML = html.join('\n');
+
+    const wall = performance.now() - started;
+    summary.hidden = false;
+    summary.innerHTML =
+      `<b>${list.length}</b> ${list.length === 1 ? 'изображение' : 'изображений'} · ` +
+      `<b>${fmtBytes(totalIn)}</b> → <b>${fmtBytes(totalOut)}</b> плейсхолдеров · ` +
+      `<b>${timesLess(totalOut, totalIn)}</b> · ` +
+      `счёт <b>${encodeMs.toFixed(0)} мс</b>, всего с чтением файлов <b>${wall.toFixed(0)} мс</b>`;
+  }
+
+  input.addEventListener('change', () => handle(input.files));
+  zone.addEventListener('click', () => input.click());
+  zone.addEventListener('dragover', (e) => {
+    e.preventDefault();
+    zone.classList.add('drag');
+  });
+  zone.addEventListener('dragleave', () => zone.classList.remove('drag'));
+  zone.addEventListener('drop', (e) => {
+    e.preventDefault();
+    zone.classList.remove('drag');
+    handle(e.dataTransfer.files);
+  });
+}
+
+initUploader();
+
+})();
+</script>
+</body>
+</html>

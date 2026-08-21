@@ -1,0 +1,19 @@
+{
+  "name": "image-placeholder-compare",
+  "version": "1.0.0",
+  "private": true,
+  "type": "module",
+  "description": "Сравнение техник blur-плейсхолдеров для изображений в SSR-приложениях",
+  "scripts": {
+    "build": "node src/generate.mjs",
+    "open": "open dist/index.html"
+  },
+  "engines": {
+    "node": ">=22"
+  },
+  "dependencies": {
+    "blurhash": "^2.0.5",
+    "sharp": "^0.34.2",
+    "thumbhash": "^0.1.1"
+  }
+}
