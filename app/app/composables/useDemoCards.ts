@@ -56,6 +56,19 @@ export function buildCards(images: any[] | undefined, params: DemoParams) {
   return Array.from({ length: images.length * params.repeat }, (_, i) => {
     const src = images[i % images.length]!;
     const variant = src.variants.find((v: any) => v.width >= 300) ?? src.variants[0];
+
+    /*
+     * Каждая карточка получает СВОЮ ссылку.
+     *
+     * В настоящем каталоге у каждого товара своё изображение, и браузеру
+     * приходится качать столько файлов, сколько карточек. Демка же собирает
+     * сетку из ограниченного набора файлов, и без этого параметра браузер
+     * узнавал бы повторы по URL и качал каждый файл один раз — конкуренции
+     * за полосу не возникало бы вовсе, а именно она здесь и изучается.
+     *
+     * Байты те же, но ресурсы для браузера разные — ровно как в жизни.
+     */
+    const unique = `n=${i}`;
     return {
       id: src.id,
       key: `${src.id}-${i}`,
@@ -68,11 +81,11 @@ export function buildCards(images: any[] | undefined, params: DemoParams) {
       /** Ключ правила в блоке стилей: один на изображение, а не на карточку. */
       phKey: src.id,
       price: 350 + i * 37,
-      url: `${variant.url}?speed=${params.speed}`,
+      url: `${variant.url}?speed=${params.speed}&${unique}`,
       bytes: variant.bytes,
       /** Полный набор размеров — для нативной загрузки браузером. */
       srcset: src.variants
-        .map((v: any) => `${v.url}?speed=${params.speed} ${v.width}w`)
+        .map((v: any) => `${v.url}?speed=${params.speed}&${unique} ${v.width}w`)
         .join(', '),
     };
   });
