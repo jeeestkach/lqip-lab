@@ -7,3 +7,6 @@ app/.output/
 app/.data/
 app/.nitro/
 app/.cache/
+
+# черновики замеров, остающиеся от разборов
+_*.mjs

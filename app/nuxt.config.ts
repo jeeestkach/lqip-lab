@@ -1,5 +1,7 @@
 import { fileURLToPath } from 'node:url';
 import path from 'node:path';
+import { classMinifier } from './build/class-minifier';
+import { cls } from './build/class-map';
 
 const rootDir = path.dirname(fileURLToPath(import.meta.url));
 
@@ -20,14 +22,18 @@ const rootDir = path.dirname(fileURLToPath(import.meta.url));
  * Класс `reveal` на корне включает затухание в стилях. Без скрипта его не будет,
  * и фотографии останутся видимыми сразу — страница обязана работать, даже если
  * этот код не выполнился.
+ *
+ * Имена классов берутся из общей карты сокращений: этот код живёт строкой
+ * в конфиге, и плагин сборки до него не дотягивается — подставляем сами,
+ * иначе селектор разошёлся бы с сокращёнными именами в разметке.
  */
 const REVEAL_WATCHER = `
-document.documentElement.classList.add('reveal');
+document.documentElement.classList.add('${cls('reveal')}');
 document.addEventListener('load', function (e) {
   var t = e.target;
   if (!t || t.tagName !== 'IMG') return;
   var slot = t.parentElement;
-  if (slot && slot.classList.contains('pcard-media')) slot.classList.add('is-loaded');
+  if (slot && slot.classList.contains('${cls('pcard-media')}')) slot.classList.add('${cls('is-loaded')}');
 }, true);
 `.trim();
 
@@ -67,4 +73,9 @@ export default defineNuxtConfig({
   },
 
   css: ['~/assets/app.css'],
+
+  vite: {
+    // Сокращает имена классов до `_a`, `_b`… Исходники остаются читаемыми.
+    plugins: [classMinifier()],
+  },
 });

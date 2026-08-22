@@ -44,12 +44,23 @@ const { offset, embedded, markFirstImagery, markCardsVisible } = useDemoFrame({
   onStop: () => undefined,
 });
 
-const { cards, total, loading } = useCatalogFeed({
+const { cards, total, loading, exhausted, loadMore } = useCatalogFeed({
   initial: [],
   total: 0,
   ph: params.ph,
   pageSize: PAGE_SIZE,
   offset,
+});
+
+/*
+ * Совместная прокрутка с соседней вкладкой (`/demo/ssr`), открытой рядом.
+ * Отстающая сторона здесь именно эта: карточек в первый момент нет вовсе,
+ * поэтому цель соседа догоняется дозаказом порций, а не прокруткой.
+ */
+const { connected, chasing, behind } = useScrollSync({
+  count: () => cards.value.length,
+  exhausted,
+  loadMore,
 });
 
 /*
@@ -91,6 +102,13 @@ watch(
         </p>
       </template>
     </div>
+
+    <!-- Состояние связи с соседней вкладкой. Вне `.demo-page`: этот значок
+         не должен попадать в указатель позиций и менять высоту ленты. -->
+    <p v-if="connected" class="demo-sync">
+      <template v-if="chasing">догоняю соседа, отстаю на {{ behind }} карточек</template>
+      <template v-else>иду с соседней вкладкой</template>
+    </p>
   </div>
 </template>
 
@@ -105,4 +123,10 @@ watch(
 .demo-page { padding: 12px; will-change: transform; }
 .demo-empty { color: var(--dim); font-size: 13px; padding: 20px 4px; }
 .demo-foot { color: var(--dim); font-size: 12px; text-align: center; padding: 14px 0 4px; }
+.demo-sync {
+  position: fixed; right: 12px; bottom: 12px; z-index: 5; margin: 0;
+  padding: 5px 10px; border-radius: 7px;
+  background: var(--panel); border: 1px solid var(--line);
+  color: var(--dim); font-size: 11.5px;
+}
 </style>
