@@ -46,8 +46,6 @@ const props = defineProps<{
   product?: Product;
 }>();
 
-const loaded = ref(false);
-
 /** Превью либо инлайном (догруженная порция), либо классом (серверная). */
 const phStyle = computed(() =>
   props.placeholder ? { '--ph': `url(${props.placeholder})` } : undefined,
@@ -84,9 +82,13 @@ function prefetchProduct() {
 <template>
   <div class="pcard" @mouseenter="prefetchProduct" @focusin="prefetchProduct">
     <a class="pcard-link" :href="product?.href ?? '#'">
+      <!--
+        Класс `is-loaded` сюда ставит наблюдатель из head, а не Vue: фотография
+        часто успевает загрузиться до того, как выполнится код фреймворка.
+      -->
       <div
         class="pcard-media"
-        :class="[hasPh ? ['has-ph', placeholder ? '' : `ph-${phKey}`] : [], { 'is-loaded': loaded }]"
+        :class="hasPh ? ['has-ph', placeholder ? '' : `ph-${phKey}`] : []"
         :style="phStyle"
       >
         <img
@@ -98,7 +100,6 @@ function prefetchProduct() {
           :loading="eager ? 'eager' : 'lazy'"
           :fetchpriority="eager ? 'high' : 'auto'"
           decoding="async"
-          @load="loaded = true"
         >
       </div>
 
@@ -154,7 +155,6 @@ function prefetchProduct() {
 .pcard-media img {
   display: block; width: 100%; height: 100%; object-fit: cover;
   position: relative; z-index: 1;
-  animation: appear .4s ease both;
 }
 
 .pcard-supplier { display: flex; align-items: center; gap: 6px; padding: 8px 8px 0; }
@@ -207,13 +207,12 @@ function prefetchProduct() {
   /* Блюр размывает и края — увеличиваем, чтобы кайма ушла за overflow: hidden. */
   transform: scale(1.15);
 }
-/* Картинка проявляется поверх слоя, и только став непрозрачной — слой гаснет. */
-.pcard-media.has-ph.is-loaded::before { opacity: 0; transition: opacity .3s ease .4s; }
-
-@keyframes appear { from { opacity: 0 } to { opacity: 1 } }
-
-@media (prefers-reduced-motion: reduce) {
-  .pcard-media img { animation: none; }
-  .pcard-media.has-ph.is-loaded::before { transition: none; }
-}
+/*
+ * Проявление живёт в глобальных стилях (assets/app.css), а не здесь.
+ *
+ * Оно завязано на класс `reveal` у корня документа, а `:global(html.reveal) …`
+ * в scoped-блоке собирается неправильно: Vue отбрасывает потомков и оставляет
+ * правило на самом `html`. Проверено — вместо проявления получался переход
+ * прозрачности на всей странице.
+ */
 </style>

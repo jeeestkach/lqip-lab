@@ -60,7 +60,9 @@ const { cards, total, loading } = useCatalogFeed({
 watch(
   () => data.value,
   (d) => {
-    if (!d?.cards.length || cards.value.length) return;
+    // `import.meta.client` — не перестраховка: watcher с `immediate` срабатывает
+    // и на сервере, где нет ни requestAnimationFrame, ни window.
+    if (!import.meta.client || !d?.cards.length || cards.value.length) return;
     cards.value = d.cards;
     total.value = d.total;
     // Вехи снимаются, когда карточки появились в разметке. Обёртка обязательна:

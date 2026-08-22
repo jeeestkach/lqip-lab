@@ -135,3 +135,31 @@ td.num { font-family: ui-monospace, Menlo, monospace; white-space: nowrap; }
 /* Переключатель-флажок в панели управления. */
 .toggle { cursor: pointer; user-select: none; }
 .toggle input { accent-color: var(--accent); margin: 0; }
+
+/* ─── Проявление фотографии поверх размытого превью ──────────────────────────
+ *
+ * Здесь, а не в scoped-блоке карточки: правило завязано на класс у корня
+ * документа, а `:global(html.reveal) …` внутри scoped Vue собирает неверно —
+ * отбрасывает потомков и оставляет переход на самом `html`.
+ *
+ * Класс `reveal` ставит наблюдатель из head (см. nuxt.config.ts), класс
+ * `is-loaded` — он же, когда фотография действительно пришла. Ни Vue, ни
+ * обработчиков в разметке: фотография часто загружается раньше, чем выполнится
+ * код фреймворка, и событие было бы упущено.
+ *
+ * Порядок важен: без скрипта ни одно из правил не применится, фотографии
+ * останутся видимыми сразу, и страница будет рабочей. Красота не должна
+ * оборачиваться пустыми карточками, если скрипт не выполнился.
+ */
+html.reveal .pcard-media.has-ph img { opacity: 0; }
+html.reveal .pcard-media.has-ph.is-loaded img {
+  opacity: 1;
+  transition: opacity .4s ease;
+}
+
+/* Не загрузилась — остаётся размытое превью, а не значок битой картинки. */
+
+@media (prefers-reduced-motion: reduce) {
+  html.reveal .pcard-media.has-ph img { opacity: 1; }
+  html.reveal .pcard-media.has-ph.is-loaded img { transition: none; }
+}
