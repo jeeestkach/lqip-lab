@@ -7,7 +7,7 @@
  * без вложенности по датам: дедупликация идёт по содержимому, а не по времени.
  */
 
-import { mkdir, writeFile, readFile, stat } from 'node:fs/promises';
+import { mkdir, writeFile, readFile, stat, rm } from 'node:fs/promises';
 import path from 'node:path';
 
 /** Контракт хранилища. Реализаций две: файловая и (в будущем) S3. */
@@ -18,6 +18,8 @@ export interface ObjectStorage {
   get(key: string): Promise<Buffer>;
   /** Есть ли объект под таким ключом. */
   exists(key: string): Promise<boolean>;
+  /** Убирает объект. Отсутствующий ключ — не ошибка. */
+  del(key: string): Promise<void>;
   /** Публичный URL объекта — то, что уедет клиенту как ссылка на CDN. */
   url(key: string): string;
 }
@@ -66,6 +68,11 @@ export class FsStorage implements ObjectStorage {
     } catch {
       return false;
     }
+  }
+
+  async del(key: string): Promise<void> {
+    // Отсутствие файла — обычный исход при повторной уборке, а не сбой.
+    await rm(this.resolve(key), { force: true });
   }
 
   url(key: string): string {

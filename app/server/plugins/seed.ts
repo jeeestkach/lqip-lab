@@ -163,7 +163,31 @@ export default defineNitroPlugin(() => {
         filled += 1;
       }
 
-      console.log(`[seed] загружено: ${added}, дозаполнено: ${filled}`);
+      /*
+       * Уборка витрины: `products.json` — источник правды для карточек товара.
+       *
+       * Том переживает обновление образа, поэтому в нём копятся товары прошлых
+       * наборов: каталог собирался заново, а старые записи никуда не делись
+       * и продолжали считаться в `total`. Постраничная выдача при этом обещала
+       * больше товаров, чем есть в текущем наборе.
+       *
+       * Трогаем ТОЛЬКО записи с товарными данными: снимки, загруженные вручную
+       * через /upload, товарной карточки не имеют, витрине не показываются
+       * и остаются лежать как лежали.
+       */
+      const known = new Set([...catalog.values()].map((e) => e.href));
+      const stale = (await repo.list()).filter((r) => r.product?.href && !known.has(r.product.href));
+      if (stale.length) {
+        await Promise.all(
+          stale.flatMap((r) => [
+            storage.del(r.originalKey),
+            ...r.variants.map((v) => storage.del(v.key)),
+          ]),
+        );
+        await repo.remove(stale.map((r) => r.id));
+      }
+
+      console.log(`[seed] загружено: ${added}, дозаполнено: ${filled}, убрано устаревших: ${stale.length}`);
     } catch (err) {
       // Пустая демка неприятна, но падать из-за засева сервер не должен.
       console.error('[seed] не удалось засеять примеры:', (err as Error).message);

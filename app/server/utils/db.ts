@@ -70,6 +70,11 @@ export interface ImageRepo {
   findById(id: string): Promise<ImageRecord | null>;
   findBySha(sha: string): Promise<ImageRecord | null>;
   list(): Promise<ImageRecord[]>;
+  /**
+   * Убирает записи по идентификаторам.
+   * @returns Сколько записей действительно удалено.
+   */
+  remove(ids: string[]): Promise<number>;
 }
 
 /**
@@ -130,6 +135,28 @@ export class JsonRepo implements ImageRepo {
     });
     this.queue = done.catch(() => undefined);
     await done;
+  }
+
+  async remove(ids: string[]): Promise<number> {
+    if (!ids.length) return 0;
+    const doomed = new Set(ids);
+    let removed = 0;
+
+    // Через ту же очередь, что вставка и правка: иначе параллельная запись
+    // вернёт на место только что вычеркнутые строки.
+    const done = this.queue.then(async () => {
+      const rows = await this.load();
+      for (let i = rows.length - 1; i >= 0; i--) {
+        if (!doomed.has(rows[i]!.id)) continue;
+        rows.splice(i, 1);
+        removed += 1;
+      }
+      if (removed) await this.flush();
+    });
+    this.queue = done.catch(() => undefined);
+    await done;
+
+    return removed;
   }
 
   async findById(id: string): Promise<ImageRecord | null> {
