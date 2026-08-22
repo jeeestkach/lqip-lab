@@ -41,6 +41,7 @@ export function toPublic(
   return {
     id: record.id,
     title: record.title,
+    product: record.product,
     width: record.width,
     height: record.height,
     // Готовый data URI с префиксом — клиенту не надо ничего доклеивать.

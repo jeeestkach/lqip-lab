@@ -18,21 +18,15 @@
  * а сами панели держатся на месте через `position: sticky`.
  */
 
-import { SPEEDS } from '~~/shared/speeds';
-
 useHead({ title: 'Сравнение стратегий рендера' });
 
-const speed = useQueryParam('speed', 'slow4g');
 const ph = useQueryParam('ph', '20');
-const repeat = useQueryParam('repeat', 3);
-const concurrency = useQueryParam('concurrency', 1);
+const repeat = useQueryParam('repeat', 1);
 
 /** Счётчик перезапусков: меняясь, он пересоздаёт оба iframe. */
 const runId = ref(0);
 
-const query = computed(
-  () => `speed=${speed.value}&ph=${ph.value}&repeat=${repeat.value}&concurrency=${concurrency.value}&r=${runId.value}`,
-);
+const query = computed(() => `ph=${ph.value}&repeat=${repeat.value}&r=${runId.value}`);
 
 /** Живая статистика каждого кадра. */
 const stats = reactive<Record<string, { done: number; total: number; elapsed: number; bytes: number; fetching?: boolean }>>({
@@ -194,12 +188,6 @@ const fmtMs = (ms: number) => (ms >= 1000 ? `${(ms / 1000).toFixed(1).replace('.
       <div class="cmp-row">
         <button @click="restart()">С начала</button>
 
-        <label>
-          скорость
-          <select v-model="speed">
-            <option v-for="s in SPEEDS" :key="s.key" :value="s.key">{{ s.label }} — {{ s.hint }}</option>
-          </select>
-        </label>
 
         <label>
           плейсхолдер
@@ -211,21 +199,13 @@ const fmtMs = (ms: number) => (ms >= 1000 ? `${(ms / 1000).toFixed(1).replace('.
           </select>
         </label>
 
-        <label>
-          порядок
-          <select v-model.number="concurrency">
-            <option :value="1">строго по очереди</option>
-            <option :value="3">по 3 сразу</option>
-            <option :value="6">по 6 — как браузер</option>
-          </select>
-        </label>
 
         <label>
           карточек
           <select v-model.number="repeat">
-            <option :value="1">14</option>
-            <option :value="3">42</option>
-            <option :value="6">84</option>
+            <option :value="1">40</option>
+            <option :value="2">80</option>
+            <option :value="3">120</option>
           </select>
         </label>
 

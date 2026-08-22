@@ -7,24 +7,17 @@
 
 /** Параметры демонстрации, приходящие в адресе. */
 export interface DemoParams {
-  speed: string;
   ph: string;
   repeat: number;
-  concurrency: number;
 }
 
 /** Читает параметры демонстрации из адреса страницы. */
 export function useDemoParams(): DemoParams {
   const route = useRoute();
-  const num = (v: unknown, d: number) => {
-    const n = Number.parseInt(String(v ?? ''), 10);
-    return Number.isFinite(n) && n > 0 ? n : d;
-  };
+  const repeat = Number.parseInt(String(route.query.repeat ?? ''), 10);
   return reactive({
-    speed: String(route.query.speed ?? 'slow4g'),
     ph: String(route.query.ph ?? '20'),
-    repeat: num(route.query.repeat, 3),
-    concurrency: num(route.query.concurrency, 1),
+    repeat: Number.isFinite(repeat) && repeat > 0 ? repeat : 1,
   });
 }
 
@@ -33,10 +26,8 @@ export function useDemoParams(): DemoParams {
  *
  * Карточек может быть сколько угодно, изображений — ограниченное число.
  * Правило `.ph-<id>` подключается классом, поэтому один data URI обслуживает
- * все повторы, а не копируется в каждый инлайновый стиль.
- *
- * @param cards Карточки с полем `placeholder`.
- * @returns Текст CSS, пригодный для вставки в `<style>`.
+ * все повторы, а не копируется в каждый инлайновый стиль: замер показал
+ * 8 КБ переплаты за повторы при 14 уникальных изображениях.
  */
 export function buildPlaceholderCss(cards: { phKey: string; placeholder: string }[]): string {
   const seen = new Map<string, string>();
@@ -48,6 +39,12 @@ export function buildPlaceholderCss(cards: { phKey: string; placeholder: string 
 
 /**
  * Разворачивает записи API в карточки товара.
+ *
+ * Ссылки на изображения идут БЕЗ каких-либо параметров задержки: качает их сам
+ * браузер, параллельно и на своей скорости. Прежняя очередь на JS вносила
+ * искусственную паузу и лишала страницу предсканера — тот начинает тянуть
+ * файлы ещё при разборе HTML, до выполнения любого скрипта.
+ *
  * @param images Записи из `/api/images`.
  * @param params Параметры демонстрации.
  */
@@ -55,20 +52,9 @@ export function buildCards(images: any[] | undefined, params: DemoParams) {
   if (!images?.length) return [];
   return Array.from({ length: images.length * params.repeat }, (_, i) => {
     const src = images[i % images.length]!;
+    // Карточная копия — 300 px по вёрстке, но srcset даёт браузеру выбрать
+    // крупнее на экранах с высокой плотностью.
     const variant = src.variants.find((v: any) => v.width >= 300) ?? src.variants[0];
-
-    /*
-     * Каждая карточка получает СВОЮ ссылку.
-     *
-     * В настоящем каталоге у каждого товара своё изображение, и браузеру
-     * приходится качать столько файлов, сколько карточек. Демка же собирает
-     * сетку из ограниченного набора файлов, и без этого параметра браузер
-     * узнавал бы повторы по URL и качал каждый файл один раз — конкуренции
-     * за полосу не возникало бы вовсе, а именно она здесь и изучается.
-     *
-     * Байты те же, но ресурсы для браузера разные — ровно как в жизни.
-     */
-    const unique = `n=${i}`;
     return {
       id: src.id,
       key: `${src.id}-${i}`,
@@ -76,17 +62,12 @@ export function buildCards(images: any[] | undefined, params: DemoParams) {
       title: src.title,
       width: src.width,
       height: src.height,
-      // Ширину выбрал сервер по параметру `ph` — лишних сюда не приходит.
       placeholder: src.placeholder,
       /** Ключ правила в блоке стилей: один на изображение, а не на карточку. */
       phKey: src.id,
-      price: 350 + i * 37,
-      url: `${variant.url}?speed=${params.speed}&${unique}`,
-      bytes: variant.bytes,
-      /** Полный набор размеров — для нативной загрузки браузером. */
-      srcset: src.variants
-        .map((v: any) => `${v.url}?speed=${params.speed}&${unique} ${v.width}w`)
-        .join(', '),
+      url: variant.url,
+      srcset: src.variants.map((v: any) => `${v.url} ${v.width}w`).join(', '),
+      product: src.product,
     };
   });
 }

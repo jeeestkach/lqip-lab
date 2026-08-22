@@ -6,107 +6,71 @@
  *   1. браузер получает и разбирает HTML, качает и исполняет JS;
  *   2. клиент запрашивает `/api/images`;
  *   3. приходят данные — только теперь появляются карточки;
- *   4. и только потом начинают грузиться изображения.
+ *   4. и только теперь браузер видит теги `<img>` и начинает качать файлы.
  *
- * Каждый шаг ждёт предыдущего. Отсюда и берётся пустой экран, знакомый по
- * каталогам на медленном соединении: до третьего шага показывать попросту нечего.
+ * Изображения грузятся ОБЫЧНЫМ образом: `src` и `srcset`, параллельно, силами
+ * браузера, без очередей и искусственных задержек. Проигрыш этой стратегии —
+ * не в скорости самих картинок, а в том, что до третьего шага показывать нечего,
+ * и запросы за ними даже не начинаются.
  */
 
 definePageMeta({ layout: false });
 
-// Мета-теги у обеих стратегий одинаковые: разница НЕ в них, а в содержимом.
 useHead({
   title: 'Каталог товаров — клиентский рендер',
-  meta: [{ name: 'description', content: 'Каталог товаров: список запрашивается браузером после загрузки скриптов.' }],
+  meta: [{ name: 'description', content: 'Каталог: список запрашивается браузером после загрузки скриптов.' }],
 });
 
 const params = useDemoParams();
 
 // `server: false` — запрос уходит ТОЛЬКО из браузера, после гидратации.
 // Это и есть клиентская стратегия: сервер о списке товаров ничего не знает.
-const { data: cards, status } = await useFetch('/api/images', {
+const { data: cards } = await useFetch('/api/images', {
   query: { ph: params.ph },
   server: false,
   lazy: true,
   transform: (d: any) => buildCards(d?.images, params),
 });
 
-const loader = useSequentialImages();
-
-function run() {
-  loader.start(
-    (cards.value ?? []).map((c) => ({ key: c.key, url: c.url })),
-    params.concurrency,
-  );
-}
-
-// Загрузку картинок начинаем не раньше, чем пришли сами данные —
-// иначе стратегия перестала бы быть честной.
-watch(cards, (list) => { if (list?.length) run(); });
-
-const { post, offset, markFirstImagery, markCardsVisible, markFirstPhoto } = useDemoFrame({
+const { offset, markFirstImagery, markCardsVisible } = useDemoFrame({
   strategy: 'csr',
-  onRun: () => { if (cards.value?.length) run(); },
-  onStop: loader.stop,
+  onRun: () => undefined,
+  onStop: () => undefined,
 });
 
-// Веха «товар виден» — на следующем кадре отрисовки после появления карточек.
+// Вехи снимаются, когда карточки появились в разметке. Обёртка обязательна:
+// requestAnimationFrame передаёт колбэку метку времени, и она попала бы
+// в первый параметр как `atFirstPaint = true`.
 watch(
   () => (cards.value ?? []).length,
-  // Обёртка обязательна: requestAnimationFrame передаёт колбэку метку времени,
-  // и она попала бы в первый параметр как `atFirstPaint = true`.
-  (n) => { if (n) nextTick(() => requestAnimationFrame(() => markCardsVisible())); },
+  (n) => {
+    if (!n) return;
+    nextTick(() => requestAnimationFrame(() => { markCardsVisible(); markFirstImagery(); }));
+  },
   { immediate: true },
-);
-
-// До первой настоящей фотографии на месте картинки пусто — отмечать нечего.
-watch(() => loader.done.value.size, (n) => {
-  if (n) nextTick(() => requestAnimationFrame(() => { markFirstImagery(); markFirstPhoto(); }));
-});
-
-watch(
-  () => [loader.done.value.size, loader.running.value, status.value],
-  () => post({
-    type: 'demo:progress',
-    strategy: 'csr',
-    done: loader.done.value.size,
-    total: loader.total.value,
-    elapsed: loader.elapsed.value,
-    bytes: loader.bytes.value,
-    fetching: status.value === 'pending',
-  }),
 );
 </script>
 
 <template>
   <div class="demo-viewport">
     <div class="demo-page" :style="{ transform: `translateY(${-offset}px)` }">
-    <!--
-      Текст намеренно не зависит от статуса запроса: на сервере он ещё 'idle',
-      на клиенте сразу 'pending', и разметка бы разошлась при гидратации.
-      Пока карточек нет — состояние ровно одно, и описывать его надо одинаково.
-    -->
-    <p v-if="!cards?.length" class="demo-empty">Запрашиваю список товаров…</p>
-    <DemoGrid v-else :cards="cards ?? []" :loaded="loader.done.value" :with-placeholder="false" />
+      <!--
+        Текст намеренно не зависит от статуса запроса: на сервере он ещё 'idle',
+        на клиенте сразу 'pending', и разметка разошлась бы при гидратации.
+      -->
+      <p v-if="!cards?.length" class="demo-empty">Запрашиваю список товаров…</p>
+      <DemoGrid v-else :cards="cards" :with-placeholder="false" />
     </div>
   </div>
 </template>
 
 <style scoped>
 /*
- * Клип делаем ЛОКАЛЬНО, а не через `html, body { overflow: hidden }`:
- * незакрытый (не scoped) блок стилей утекает в документ родителя и ломает
- * прокрутку самой страницы сравнения. Фиксированная обёртка занимает ровно
- * область кадра и обрезает содержимое, не трогая ничего снаружи.
- *
- * Страница внутри iframe НЕ прокручивается сама: её сдвигает родитель через
- * transform. Собственная полоса была бы вторым источником правды.
+ * Клип локальный, а не через `html, body { overflow: hidden }`: незакрытый
+ * блок стилей утекает в документ родителя и ломает прокрутку страницы сравнения.
+ * Страница внутри iframe не прокручивается сама — её сдвигает родитель.
  */
-.demo-viewport {
-  position: fixed;
-  inset: 0;
-  overflow: hidden;
-}
+.demo-viewport { position: fixed; inset: 0; overflow: hidden; }
 .demo-page { padding: 12px; will-change: transform; }
 .demo-empty { color: var(--dim); font-size: 13px; padding: 20px 4px; }
 </style>
