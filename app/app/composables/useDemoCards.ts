@@ -49,9 +49,20 @@ export function buildPlaceholderCss(cards: { phKey: string; placeholder: string 
  * @param params Параметры демонстрации.
  */
 export function buildCards(images: any[] | undefined, params: DemoParams) {
-  if (!images?.length) return [];
-  return Array.from({ length: images.length * params.repeat }, (_, i) => {
-    const src = images[i % images.length]!;
+  /*
+   * Берём только записи с товарными данными.
+   *
+   * В хранилище могут лежать снимки, загруженные вручную через /upload, и
+   * остатки прежних наборов: карточки для них рисовались бы без поставщика,
+   * цены и ссылки. Витрина должна выглядеть как витрина, поэтому фильтруем
+   * здесь, а не удаляем записи — стирать чужие данные ради вида демонстрации
+   * неправильно, да и том с ними трогать нельзя.
+   */
+  const products = (images ?? []).filter((i) => i?.product?.href);
+  if (!products.length) return [];
+
+  return Array.from({ length: products.length * params.repeat }, (_, i) => {
+    const src = products[i % products.length]!;
     // Карточная копия — 300 px по вёрстке, но srcset даёт браузеру выбрать
     // крупнее на экранах с высокой плотностью.
     const variant = src.variants.find((v: any) => v.width >= 300) ?? src.variants[0];

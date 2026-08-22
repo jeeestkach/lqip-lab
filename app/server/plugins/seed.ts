@@ -92,7 +92,15 @@ export default defineNitroPlugin(() => {
         if (await repo.findBySha(hash)) continue;
 
         const slug = path.basename(file).replace(/\.[^.]+$/, '');
-        const entry = catalog.get(slug);
+        /*
+         * Сопоставление с запасным вариантом по префиксу.
+         *
+         * Имена файлов обрезаны при скачивании, а слаги в каталоге бывают
+         * длиннее — точное совпадение теряло такие товары, и они засевались
+         * без карточки: ни поставщика, ни цены, ни ссылки. Семь из сорока.
+         */
+        const entry =
+          catalog.get(slug) ?? [...catalog.values()].find((e) => e.slug.startsWith(slug));
 
         const processed = await processImage(input, SIZES);
         await storage.put(processed.originalKey, input, processed.originalMime);
@@ -126,7 +134,35 @@ export default defineNitroPlugin(() => {
         added += 1;
       }
 
-      console.log(`[seed] загружено примеров: ${added} (с карточками товара: ${catalog.size})`);
+      /*
+       * Дозаполнение уже засеянных записей.
+       *
+       * Дедупликация по sha256 пропускает файл, который уже в хранилище, —
+       * значит исправленное сопоставление на него бы не подействовало, и запись
+       * навсегда осталась бы без поставщика и цены. Обновляем только товарные
+       * поля: изображения и производные не трогаем.
+       */
+      let filled = 0;
+      for (const rec of await repo.list()) {
+        if (rec.product) continue;
+        const entry =
+          catalog.get(rec.title) ?? [...catalog.values()].find((e) => e.slug.startsWith(rec.title));
+        if (!entry) continue;
+        await repo.update(rec.id, {
+          title: entry.title,
+          product: {
+            href: entry.href,
+            supplier: entry.supplier,
+            ...(entry.supplierLogo ? { supplierLogo: entry.supplierLogo } : {}),
+            ...(entry.supplierBadge ? { supplierBadge: entry.supplierBadge } : {}),
+            price: entry.price,
+            ...(entry.minQty ? { minQty: entry.minQty } : {}),
+          },
+        });
+        filled += 1;
+      }
+
+      console.log(`[seed] загружено: ${added}, дозаполнено: ${filled}`);
     } catch (err) {
       // Пустая демка неприятна, но падать из-за засева сервер не должен.
       console.error('[seed] не удалось засеять примеры:', (err as Error).message);

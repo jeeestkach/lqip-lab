@@ -65,6 +65,8 @@ export interface ImageRecord {
 /** Контракт репозитория. */
 export interface ImageRepo {
   insert(record: Omit<ImageRecord, 'id' | 'createdAt'>): Promise<ImageRecord>;
+  /** Дозаполняет поля существующей записи, не трогая изображения. */
+  update(id: string, patch: Partial<ImageRecord>): Promise<void>;
   findById(id: string): Promise<ImageRecord | null>;
   findBySha(sha: string): Promise<ImageRecord | null>;
   list(): Promise<ImageRecord[]>;
@@ -115,6 +117,19 @@ export class JsonRepo implements ImageRepo {
     await done;
 
     return full;
+  }
+
+  async update(id: string, patch: Partial<ImageRecord>): Promise<void> {
+    // Через ту же очередь, что и вставка: иначе параллельная запись затрёт правку.
+    const done = this.queue.then(async () => {
+      const rows = await this.load();
+      const row = rows.find((r) => r.id === id);
+      if (!row) return;
+      Object.assign(row, patch);
+      await this.flush();
+    });
+    this.queue = done.catch(() => undefined);
+    await done;
   }
 
   async findById(id: string): Promise<ImageRecord | null> {
