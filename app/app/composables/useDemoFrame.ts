@@ -94,6 +94,18 @@ export function useDemoFrame(opts: DemoFrameOptions) {
   /** Смещение, заданное родителем. Применяется к содержимому, а не к окну. */
   const offset = ref(0);
 
+  /**
+   * Открыта ли страница внутри кадра сравнения.
+   *
+   * По умолчанию `false`, и это важно: сервер не знает, куда попадёт документ,
+   * а значение, выставленное сразу, разошлось бы с серверной разметкой при
+   * гидратации. Ставим после монтирования — тогда обе стороны совпадают.
+   *
+   * Вне кадра страница обязана прокручиваться сама: иначе до догрузки следующих
+   * порций просто не добраться, и открыть демку отдельной вкладкой невозможно.
+   */
+  const embedded = ref(false);
+
   let observer: ResizeObserver | null = null;
   let lastHeight = 0;
 
@@ -217,6 +229,7 @@ export function useDemoFrame(opts: DemoFrameOptions) {
   }
 
   onMounted(() => {
+    embedded.value = window.parent !== window;
     window.addEventListener('message', onMessage);
 
     // Высота меняется, когда приходят карточки и когда картинки занимают место.
@@ -238,5 +251,5 @@ export function useDemoFrame(opts: DemoFrameOptions) {
     observer?.disconnect();
   });
 
-  return { post, offset, reportMilestones, markFirstImagery, markCardsVisible, markFirstPhoto };
+  return { post, offset, embedded, reportMilestones, markFirstImagery, markCardsVisible, markFirstPhoto };
 }

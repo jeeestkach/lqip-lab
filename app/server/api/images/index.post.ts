@@ -9,7 +9,7 @@
  * Разделение на очередь понадобится, когда добавится AVIF (≈2 с на копию).
  */
 
-import { processImage, DEFAULT_SIZES, DEFAULT_PLACEHOLDER_WIDTH, toDataUri } from '../../utils/pipeline';
+import { processImage, DEFAULT_SIZES, DEFAULT_PLACEHOLDER_WIDTH, CARD_WIDTH, toDataUri } from '../../utils/pipeline';
 import type { ImageRecord } from '../../utils/db';
 
 /** Разбирает `sizes=300,640` в массив ширин. */
@@ -38,6 +38,8 @@ export function toPublic(
 ) {
   const sorted = [...record.variants].sort((a, b) => a.width - b.width);
   const chosen = phWidth && record.placeholders[phWidth] ? phWidth : String(DEFAULT_PLACEHOLDER_WIDTH);
+  /** Копия под карточку каталога: первая, что перекрывает слот на ретине. */
+  const card = sorted.find((v) => v.width >= CARD_WIDTH) ?? sorted[sorted.length - 1]!;
   return {
     id: record.id,
     title: record.title,
@@ -57,19 +59,31 @@ export function toPublic(
           ),
         }
       : {}),
-    variants: sorted.map((v) => ({
-      width: v.width,
-      height: v.height,
-      bytes: v.bytes,
-      url: storage.url(v.key),
-    })),
+    /*
+     * Каталогу — ОДИН адрес, странице товара — все копии.
+     *
+     * Карточка показывает ровно одну копию, и `srcset` ей не нужен: слот в сетке
+     * фиксирован вёрсткой, а выбранная ширина уже перекрывает его на ретине.
+     * Набор из трёх адресов при этом стоил дорого — каждый несёт 64-символьный
+     * хеш, и в разметке они повторялись на каждой карточке.
+     */
+    ...(full
+      ? {
+          variants: sorted.map((v) => ({
+            width: v.width,
+            height: v.height,
+            bytes: v.bytes,
+            url: storage.url(v.key),
+          })),
+        }
+      : { url: storage.url(card.key) }),
 
     /*
      * Всё, что ниже, в список каталога НЕ уезжает.
      *
      * `srcset` — чистое дублирование: он целиком собирается из `variants`,
-     *   а весил 2,4 КБ из 15,1 КБ ответа. Пусть его собирает клиент.
-     * `original` — каталогу не нужен: там показывается копия 300 px.
+     *   а весил 2,4 КБ из 15,1 КБ ответа.
+     * `original` — каталогу не нужен: там показывается карточная копия.
      * `timings` — отладочные данные, место которым на странице загрузки.
      * `format` у вариантов — всегда webp, повторять его в каждом объекте незачем.
      */

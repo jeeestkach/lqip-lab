@@ -21,12 +21,11 @@
 useHead({ title: 'Сравнение стратегий рендера' });
 
 const ph = useQueryParam('ph', '20');
-const repeat = useQueryParam('repeat', 1);
 
 /** Счётчик перезапусков: меняясь, он пересоздаёт оба iframe. */
 const runId = ref(0);
 
-const query = computed(() => `ph=${ph.value}&repeat=${repeat.value}&r=${runId.value}`);
+const query = computed(() => `ph=${ph.value}&r=${runId.value}`);
 
 /** Живая статистика каждого кадра. */
 const stats = reactive<Record<string, { done: number; total: number; elapsed: number; bytes: number; fetching?: boolean }>>({
@@ -200,16 +199,10 @@ const fmtMs = (ms: number) => (ms >= 1000 ? `${(ms / 1000).toFixed(1).replace('.
         </label>
 
 
-        <label>
-          карточек
-          <select v-model.number="repeat">
-            <option :value="1">40</option>
-            <option :value="2">80</option>
-            <option :value="3">120</option>
-          </select>
-        </label>
-
-        <span class="dim hint">параметры применяются кнопкой «С начала»</span>
+        <span class="dim hint">
+          Каталог порциями по 40 — следующая заказывается за 30 % до низа.
+          Параметры применяются кнопкой «С начала».
+        </span>
       </div>
     </div>
 
@@ -401,11 +394,11 @@ const fmtMs = (ms: number) => (ms >= 1000 ? `${(ms / 1000).toFixed(1).replace('.
         </table>
 
         <p v-if="seo.ssr" class="dim mnote">
-          <b>По тегам img тут сравнивать нельзя</b> (строки выделены): в этой демке их
-          ставит JS ради контроля порядка загрузки. В продакшне <code>&lt;img&gt;</code> с
-          <code>src</code>, <code>srcset</code> и <code>alt</code> рендерил бы сервер,
-          а плейсхолдер лежал бы фоном рамки. Сравнивать надо по названиям товаров,
-          тексту и весу документа.
+          Теги <code>&lt;img&gt;</code> со <code>src</code> и <code>alt</code> рендерит
+          сервер — именно их находит предсканер и начинает качать файлы ещё при разборе
+          HTML. У клиентской стратегии в документе нет ни одного: там пустая оболочка.
+          В счёт идёт только первая порция — остальные догружаются по мере прокрутки
+          и краулеру, как и пользователю, достаются позже.
         </p>
       </section>
     </div>

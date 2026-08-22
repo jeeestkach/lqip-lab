@@ -21,16 +21,26 @@ const props = defineProps<{
   title: string;
   width: number;
   height: number;
-  /** Ключ правила с плейсхолдером в общем блоке стилей. */
+  /** Ключ правила с плейсхолдером в общем блоке стилей — для серверной порции. */
   phKey?: string;
-  /** Показывать ли размытый плейсхолдер до прихода файла. */
+  /**
+   * Готовый data URI превью — для порций, догруженных на клиенте.
+   *
+   * Их правил в серверном блоке стилей нет и быть не может: документ давно
+   * отдан. Такие карточки несут превью инлайновым стилем — в разметке документа
+   * это ничего не стоит, потому что документ уже у клиента.
+   */
+  placeholder?: string;
+  /** Показывать ли размытое превью до прихода файла. */
   withPlaceholder: boolean;
-  /** Основа адреса копий: `/cdn/<хеш>`; сами адреса собираются здесь. */
-  imgBase?: string;
-  /** Доступные ширины копий. */
-  widths?: number[];
-  /** Ширина, которая идёт в `src`. */
-  defaultWidth?: number;
+  /**
+   * Единственный адрес изображения.
+   *
+   * `srcset` карточке не нужен: слот в сетке задан вёрсткой и не меняется,
+   * а ширина копии подобрана так, чтобы перекрыть его на ретине. Набор из трёх
+   * адресов стоил бы 64-символьного хеша в каждом, на каждой карточке.
+   */
+  url?: string;
   /** Грузить немедленно (первый экран) или лениво. */
   eager?: boolean;
   product?: Product;
@@ -38,20 +48,11 @@ const props = defineProps<{
 
 const loaded = ref(false);
 
-/**
- * Адреса собираются из основы, а не приходят готовыми.
- *
- * Готовые строки пришлось бы везти и в разметке, и в payload гидратации —
- * это двойная плата за один и тот же 64-символьный хеш в каждой ссылке.
- */
-const src = computed(() =>
-  props.imgBase ? `${props.imgBase}/${props.defaultWidth ?? props.widths?.[0]}.webp` : undefined,
+/** Превью либо инлайном (догруженная порция), либо классом (серверная). */
+const phStyle = computed(() =>
+  props.placeholder ? { '--ph': `url(${props.placeholder})` } : undefined,
 );
-const srcset = computed(() =>
-  props.imgBase && props.widths?.length
-    ? props.widths.map((w) => `${props.imgBase}/${w}.webp ${w}w`).join(', ')
-    : undefined,
-);
+const hasPh = computed(() => props.withPlaceholder && Boolean(props.placeholder || props.phKey));
 
 /** Первая буква поставщика — запасной значок, когда логотипа нет. */
 const badge = computed(
@@ -85,13 +86,12 @@ function prefetchProduct() {
     <a class="pcard-link" :href="product?.href ?? '#'">
       <div
         class="pcard-media"
-        :class="[withPlaceholder && phKey ? ['has-ph', `ph-${phKey}`] : [], { 'is-loaded': loaded }]"
+        :class="[hasPh ? ['has-ph', placeholder ? '' : `ph-${phKey}`] : [], { 'is-loaded': loaded }]"
+        :style="phStyle"
       >
         <img
-          v-if="src"
-          :src="src"
-          :srcset="srcset"
-          sizes="(max-width: 620px) 50vw, 240px"
+          v-if="url"
+          :src="url"
           :alt="title"
           :width="width"
           :height="height"

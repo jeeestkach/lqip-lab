@@ -5,31 +5,50 @@
  * моментом получения данных, — а не набором товаров, порядком или ценами.
  */
 
+/** Карточка товара в том виде, в каком её ждёт сетка. */
+export interface DemoCard {
+  id: string;
+  key: string;
+  /** Сквозной номер по всей ленте: по нему решается, грузить ли сразу. */
+  index: number;
+  title: string;
+  width: number;
+  height: number;
+  /** Готовый data URI размытого превью. У серверной первой порции его нет. */
+  placeholder?: string;
+  /** Ключ правила `.ph-<id>` в блоке стилей, который прислал сервер. */
+  phKey: string;
+  /** Единственный адрес изображения: `srcset` карточке не нужен. */
+  url: string;
+  product?: {
+    href: string;
+    supplier: string;
+    supplierLogo?: string;
+    supplierBadge?: string;
+    price: string;
+    minQty?: string;
+  };
+}
+
 /** Параметры демонстрации, приходящие в адресе. */
 export interface DemoParams {
   ph: string;
-  repeat: number;
 }
 
 /** Читает параметры демонстрации из адреса страницы. */
 export function useDemoParams(): DemoParams {
   const route = useRoute();
-  const repeat = Number.parseInt(String(route.query.repeat ?? ''), 10);
-  return reactive({
-    ph: String(route.query.ph ?? '20'),
-    repeat: Number.isFinite(repeat) && repeat > 0 ? repeat : 1,
-  });
+  return reactive({ ph: String(route.query.ph ?? '20') });
 }
 
 /**
  * Собирает блок стилей с плейсхолдерами — по одному правилу на изображение.
  *
- * Карточек может быть сколько угодно, изображений — ограниченное число.
- * Правило `.ph-<id>` подключается классом, поэтому один data URI обслуживает
- * все повторы, а не копируется в каждый инлайновый стиль: замер показал
- * 8 КБ переплаты за повторы при 14 уникальных изображениях.
+ * Правило `.ph-<id>` подключается классом, а не инлайновым стилем: так один
+ * data URI обслуживает карточку любой вложенности, и повторы не копируют его
+ * в разметку. Применяется только к первой порции — её рисует сервер.
  */
-export function buildPlaceholderCss(cards: { phKey: string; placeholder: string }[]): string {
+export function buildPlaceholderCss(cards: { phKey: string; placeholder?: string }[]): string {
   const seen = new Map<string, string>();
   for (const c of cards) {
     if (c.placeholder && !seen.has(c.phKey)) seen.set(c.phKey, c.placeholder);
@@ -40,54 +59,27 @@ export function buildPlaceholderCss(cards: { phKey: string; placeholder: string 
 /**
  * Разворачивает записи API в карточки товара.
  *
- * Ссылки на изображения идут БЕЗ каких-либо параметров задержки: качает их сам
- * браузер, параллельно и на своей скорости. Прежняя очередь на JS вносила
- * искусственную паузу и лишала страницу предсканера — тот начинает тянуть
- * файлы ещё при разборе HTML, до выполнения любого скрипта.
+ * Ссылки идут БЕЗ параметров задержки: изображения качает сам браузер,
+ * параллельно и на своей скорости. Очередь на JS вносила искусственную паузу
+ * и лишала страницу предсканера — тот начинает тянуть файлы ещё при разборе
+ * HTML, до выполнения любого скрипта.
  *
  * @param images Записи из `/api/images`.
- * @param params Параметры демонстрации.
+ * @param startIndex Сколько карточек уже в ленте — чтобы номера не начинались
+ *   заново в каждой догруженной порции.
  */
-export function buildCards(images: any[] | undefined, params: DemoParams) {
-  /*
-   * Берём только записи с товарными данными.
-   *
-   * В хранилище могут лежать снимки, загруженные вручную через /upload, и
-   * остатки прежних наборов: карточки для них рисовались бы без поставщика,
-   * цены и ссылки. Витрина должна выглядеть как витрина, поэтому фильтруем
-   * здесь, а не удаляем записи — стирать чужие данные ради вида демонстрации
-   * неправильно, да и том с ними трогать нельзя.
-   */
-  const products = (images ?? []).filter((i) => i?.product?.href);
-  if (!products.length) return [];
-
-  return Array.from({ length: products.length * params.repeat }, (_, i) => {
-    const src = products[i % products.length]!;
-    // Карточная копия — 300 px по вёрстке, но srcset даёт браузеру выбрать
-    // крупнее на экранах с высокой плотностью.
-    const variant = src.variants.find((v: any) => v.width >= 300) ?? src.variants[0];
-    return {
-      id: src.id,
-      key: `${src.id}-${i}`,
-      index: i,
-      title: src.title,
-      width: src.width,
-      height: src.height,
-      placeholder: src.placeholder,
-      /** Ключ правила в блоке стилей: один на изображение, а не на карточку. */
-      phKey: src.id,
-      /*
-       * В payload уезжает ОСНОВА адреса и список ширин, а не три готовых ссылки.
-       *
-       * Полные адреса уже лежат в разметке, в атрибутах `src` и `srcset`; дублировать
-       * их в payload гидратации значит платить дважды за один и тот же 64-символьный
-       * хеш. Замер: 12 985 B из 37 532 B payload — это ссылки, из них 9 865 B
-       * приходилось на srcset.
-       */
-      imgBase: variant.url.replace(/\/\d+\.webp$/, ''),
-      widths: src.variants.map((v: any) => v.width),
-      defaultWidth: variant.width,
-      product: src.product,
-    };
-  });
+export function buildCards(images: any[] | undefined, startIndex = 0): DemoCard[] {
+  return (images ?? []).map((src, i) => ({
+    id: src.id,
+    key: src.id,
+    index: startIndex + i,
+    title: src.title,
+    width: src.width,
+    height: src.height,
+    placeholder: src.placeholder,
+    /** Ключ правила в блоке стилей: один на изображение, а не на карточку. */
+    phKey: src.id,
+    url: src.url,
+    product: src.product,
+  }));
 }

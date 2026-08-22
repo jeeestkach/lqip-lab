@@ -12,30 +12,11 @@
  * качать ещё при разборе HTML.
  */
 
-interface Card {
-  id: string;
-  key: string;
-  index: number;
-  title: string;
-  width: number;
-  height: number;
-  phKey: string;
-  imgBase: string;
-  widths: number[];
-  defaultWidth: number;
-  product?: {
-    href: string;
-    supplier: string;
-    supplierLogo?: string;
-    supplierBadge?: string;
-    price: string;
-    minQty?: string;
-  };
-}
+import type { DemoCard } from '../composables/useDemoCards';
 
 const props = withDefaults(
   defineProps<{
-    cards: Card[];
+    cards: DemoCard[];
     /** Показывать ли размытый плейсхолдер до прихода файла. */
     withPlaceholder: boolean;
     /** Сколько первых карточек грузить немедленно; остальные — лениво. */
@@ -65,10 +46,9 @@ function isEager(index: number): boolean {
       :width="card.width"
       :height="card.height"
       :ph-key="card.phKey"
+      :placeholder="card.placeholder"
       :with-placeholder="withPlaceholder"
-      :img-base="card.imgBase"
-      :widths="card.widths"
-      :default-width="card.defaultWidth"
+      :url="card.url"
       :eager="isEager(card.index)"
       :product="card.product"
     />
