@@ -164,13 +164,35 @@ function matchesEtag(header: string | undefined, tag: string): boolean {
   return header.split(',').some((candidate) => candidate.trim() === tag);
 }
 
+/** Микросекунды между двумя отсчётами. */
+function usSince(from: bigint): number {
+  return Number(process.hrtime.bigint() - from) / 1000;
+}
+
 export default defineNitroPlugin((nitro) => {
+  /*
+   * Отметка начала обработки.
+   *
+   * Нужна, чтобы отделить время отрисовки от времени сжатия: снаружи они
+   * сливаются в одно «сервер думал», и именно из-за этого слипания brotli
+   * максимального качества полгода выдавался за медленный рендер.
+   */
+  nitro.hooks.hook('request', (event) => {
+    event.context.t0 = process.hrtime.bigint();
+  });
+
   // Страницы, отрисованные сервером.
   nitro.hooks.hook('render:response', async (response, { event }) => {
     const body = typeof response.body === 'string' ? response.body : null;
+    const t0 = event.context.t0 as bigint | undefined;
+    /** Отрисовка: от начала обработки до готовой строки HTML. */
+    const renderUs = t0 ? usSince(t0) : 0;
 
     if (body) {
+      const tEtag = process.hrtime.bigint();
       const tag = etagOf(body);
+      const etagUs = usSince(tEtag);
+      event.context.timing = { renderUs, etagUs, bytes: body.length };
       response.headers = response.headers ?? {};
       response.headers.etag = tag;
       response.headers['cache-control'] =
@@ -180,10 +202,19 @@ export default defineNitroPlugin((nitro) => {
       response.headers.vary = 'accept-encoding';
 
       if (matchesEtag(getRequestHeader(event, 'if-none-match'), tag)) {
-        // Копия клиента годится: тело не отправляем, сжимать нечего.
+        /*
+         * Копия клиента годится: тело не отправляем, сжимать нечего.
+         *
+         * Отрисовка при этом УЖЕ случилась — страница собрана целиком только
+         * ради того, чтобы посчитать её версию и выбросить. Так устроен любой
+         * ETag поверх динамической страницы; сэкономить эти миллисекунды можно
+         * лишь запомнив версию по адресу, но тогда придётся самостоятельно
+         * решать, когда она устарела.
+         */
         response.statusCode = 304;
         response.statusMessage = 'Not Modified';
         response.body = '';
+        response.headers['server-timing'] = timingHeader({ renderUs, etagUs });
         return;
       }
     }
@@ -194,9 +225,50 @@ export default defineNitroPlugin((nitro) => {
     const encoding = negotiate(getRequestHeader(event, 'accept-encoding'));
     if (!encoding) return;
 
-    const out = await compress(body, encoding, String(response.headers.etag));
+    const tag = String(response.headers.etag);
+    const cached = compressed.has(`${tag}:${encoding}`);
+    const tCompress = process.hrtime.bigint();
+    const out = await compress(body, encoding, tag);
+    const compressUs = usSince(tCompress);
+
     response.body = out;
     response.headers['content-encoding'] = encoding;
     response.headers['content-length'] = String(out.length);
+
+    const t = event.context.timing as { renderUs: number; etagUs: number } | undefined;
+    response.headers['server-timing'] = timingHeader({
+      renderUs: t?.renderUs ?? 0,
+      etagUs: t?.etagUs ?? 0,
+      compressUs,
+      compressCached: cached,
+    });
   });
 });
+
+/**
+ * Собирает заголовок `server-timing` — разбор ответа по этапам.
+ *
+ * Виден во вкладке «Сеть» любого браузера рядом с самим запросом, поэтому
+ * не требует ни отдельной страницы, ни логов. Именно такая разбивка показала,
+ * что 180 мс уходили не на отрисовку, а на сжатие.
+ *
+ * Подписи латиницей: заголовки HTTP переносят только однобайтные знаки, и
+ * кириллица роняет ответ с `ERR_INVALID_CHAR`. Это ограничение протокола,
+ * а не предпочтение.
+ */
+function timingHeader(t: {
+  renderUs: number;
+  etagUs: number;
+  compressUs?: number;
+  compressCached?: boolean;
+}): string {
+  const ms = (us: number) => (us / 1000).toFixed(2);
+  const parts = [
+    `render;desc="SSR";dur=${ms(t.renderUs)}`,
+    `etag;desc="version";dur=${ms(t.etagUs)}`,
+  ];
+  if (t.compressUs !== undefined) {
+    parts.push(`br;desc="${t.compressCached ? 'brotli-cached' : 'brotli'}";dur=${ms(t.compressUs)}`);
+  }
+  return parts.join(', ');
+}
