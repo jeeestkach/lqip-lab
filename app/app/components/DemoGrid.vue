@@ -55,7 +55,11 @@ function isEager(index: number): boolean {
   </div>
 </template>
 
-<style scoped>
+<style>
+/*
+ * Блок НЕ scoped: единственный селектор .dgrid уникален, а область видимости
+ * стоила бы атрибута на каждой карточке сетки.
+ */
 .dgrid {
   display: grid;
   grid-template-columns: repeat(auto-fill, minmax(190px, 1fr));
