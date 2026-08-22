@@ -242,6 +242,20 @@ export default defineNitroPlugin((nitro) => {
       compressUs,
       compressCached: cached,
     });
+
+    /*
+     * Готовую страницу — в кеш, чтобы следующий такой же запрос не доходил
+     * до отрисовки. Кладём ПОСЛЕ сжатия: там уже есть и разметка, и версия,
+     * и сжатое представление, то есть всё, что нужно для ответа.
+     */
+    const key = pageCacheKey(event.path.split('?')[0]!, getQuery(event));
+    if (key) {
+      const existing = getPage(key);
+      // Представления накапливаются: brotli и gzip приходят разными запросами.
+      const encoded = existing?.etag === tag ? existing.encoded : new Map<string, Buffer>();
+      encoded.set(encoding, out);
+      setPage(key, { html: body, etag: tag, encoded });
+    }
   });
 });
 
