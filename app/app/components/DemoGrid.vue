@@ -20,8 +20,9 @@ interface Card {
   width: number;
   height: number;
   phKey: string;
-  url: string;
-  srcset: string;
+  imgBase: string;
+  widths: number[];
+  defaultWidth: number;
   product?: {
     href: string;
     supplier: string;
@@ -65,8 +66,9 @@ function isEager(index: number): boolean {
       :height="card.height"
       :ph-key="card.phKey"
       :with-placeholder="withPlaceholder"
-      :src="card.url"
-      :srcset="card.srcset"
+      :img-base="card.imgBase"
+      :widths="card.widths"
+      :default-width="card.defaultWidth"
       :eager="isEager(card.index)"
       :product="card.product"
     />

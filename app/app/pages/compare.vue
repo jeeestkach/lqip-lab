@@ -220,11 +220,8 @@ const fmtMs = (ms: number) => (ms >= 1000 ? `${(ms / 1000).toFixed(1).replace('.
           <header class="pane-head pane-bad">
             <b>Только клиентский рендер</b>
             <span class="pane-stat">
-              <template v-if="stats.csr.fetching">запрашивает список…</template>
-              <template v-else-if="stats.csr.total">
-                {{ stats.csr.done }} / {{ stats.csr.total }} · {{ fmtMs(stats.csr.elapsed) }} · {{ fmt(stats.csr.bytes) }}
-              </template>
-              <template v-else>ждёт JS</template>
+              <template v-if="marks.csr">карточки видны: <b>{{ fmtMs(marks.csr.cardsVisible) }}</b></template>
+              <template v-else>ждёт скрипты и ответ API…</template>
             </span>
           </header>
           <iframe
@@ -239,10 +236,8 @@ const fmtMs = (ms: number) => (ms >= 1000 ? `${(ms / 1000).toFixed(1).replace('.
           <header class="pane-head pane-good">
             <b>SSR с плейсхолдерами</b>
             <span class="pane-stat">
-              <template v-if="stats.ssr.total">
-                {{ stats.ssr.done }} / {{ stats.ssr.total }} · {{ fmtMs(stats.ssr.elapsed) }} · {{ fmt(stats.ssr.bytes) }}
-              </template>
-              <template v-else>готов</template>
+              <template v-if="marks.ssr">карточки видны: <b>{{ fmtMs(marks.ssr.cardsVisible) }}</b></template>
+              <template v-else>рисуется…</template>
             </span>
           </header>
           <iframe
@@ -253,6 +248,19 @@ const fmtMs = (ms: number) => (ms >= 1000 ? `${(ms / 1000).toFixed(1).replace('.
           />
         </section>
       </div>
+    </div>
+
+    <div class="cmp-warn">
+      <b>Ответ зависит от того, лежат ли скрипты в кеше — и это не мелочь.</b>
+      На ПЕРВОМ визите серверный рендер выигрывает заметно: карточки видны на 568 мс
+      против 1581 мс, потому что клиентской стратегии сначала нужно скачать
+      и выполнить 79 КБ скриптов, а только потом сходить за данными.
+      На ПОВТОРНОМ визите, когда скрипты уже в кеше, картина переворачивается:
+      клиентская показывает за 249 мс, серверная за 343 мс — её документ
+      весит 110 КБ против 2,4 КБ и передаётся дольше, чем экономится на запросе.
+      <br><br>
+      Два кадра ниже грузятся ОДНОВРЕМЕННО и делят канал, поэтому глазами
+      сравнивать их некорректно — смотрите на числа в шапках панелей.
     </div>
 
     <div class="metrics">
@@ -456,6 +464,12 @@ iframe { width: 100%; height: 620px; border: 0; background: var(--bg); display: 
 .metrics .bad { color: #d97706; }
 /* Показатели, которые в этой демке не сравнимы между стратегиями. */
 .metrics tr.caveat td { opacity: .45; }
+
+.cmp-warn {
+  max-width: 1500px; margin: 18px auto 0; padding: 12px 16px;
+  border-left: 3px solid #d97706; border-radius: 0 8px 8px 0;
+  background: var(--panel); font-size: 14px;
+}
 
 @media (max-width: 1000px) {
   .stage-inner { grid-template-columns: 1fr; }

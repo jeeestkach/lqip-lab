@@ -25,15 +25,33 @@ const props = defineProps<{
   phKey?: string;
   /** Показывать ли размытый плейсхолдер до прихода файла. */
   withPlaceholder: boolean;
-  /** Ссылка на карточную копию; пусто — изображение ещё не грузится. */
-  src?: string;
-  srcset?: string;
+  /** Основа адреса копий: `/cdn/<хеш>`; сами адреса собираются здесь. */
+  imgBase?: string;
+  /** Доступные ширины копий. */
+  widths?: number[];
+  /** Ширина, которая идёт в `src`. */
+  defaultWidth?: number;
   /** Грузить немедленно (первый экран) или лениво. */
   eager?: boolean;
   product?: Product;
 }>();
 
 const loaded = ref(false);
+
+/**
+ * Адреса собираются из основы, а не приходят готовыми.
+ *
+ * Готовые строки пришлось бы везти и в разметке, и в payload гидратации —
+ * это двойная плата за один и тот же 64-символьный хеш в каждой ссылке.
+ */
+const src = computed(() =>
+  props.imgBase ? `${props.imgBase}/${props.defaultWidth ?? props.widths?.[0]}.webp` : undefined,
+);
+const srcset = computed(() =>
+  props.imgBase && props.widths?.length
+    ? props.widths.map((w) => `${props.imgBase}/${w}.webp ${w}w`).join(', ')
+    : undefined,
+);
 
 /** Первая буква поставщика — запасной значок, когда логотипа нет. */
 const badge = computed(

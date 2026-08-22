@@ -76,8 +76,17 @@ export function buildCards(images: any[] | undefined, params: DemoParams) {
       placeholder: src.placeholder,
       /** Ключ правила в блоке стилей: один на изображение, а не на карточку. */
       phKey: src.id,
-      url: variant.url,
-      srcset: src.variants.map((v: any) => `${v.url} ${v.width}w`).join(', '),
+      /*
+       * В payload уезжает ОСНОВА адреса и список ширин, а не три готовых ссылки.
+       *
+       * Полные адреса уже лежат в разметке, в атрибутах `src` и `srcset`; дублировать
+       * их в payload гидратации значит платить дважды за один и тот же 64-символьный
+       * хеш. Замер: 12 985 B из 37 532 B payload — это ссылки, из них 9 865 B
+       * приходилось на srcset.
+       */
+      imgBase: variant.url.replace(/\/\d+\.webp$/, ''),
+      widths: src.variants.map((v: any) => v.width),
+      defaultWidth: variant.width,
       product: src.product,
     };
   });
