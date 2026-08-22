@@ -42,8 +42,15 @@ export function useCatalogFeed(opts: CatalogFeedOptions) {
   const total = ref(opts.total);
   const loading = ref(false);
 
-  /** Всё ли уже показано. */
-  const exhausted = computed(() => cards.value.length >= total.value);
+  /**
+   * Всё ли уже показано.
+   *
+   * Проверка на положительный итог обязательна. У клиентской стратегии в первый
+   * момент нет ни карточек, ни известного итога, и `0 >= 0` объявляло бы ленту
+   * дочитанной ещё до прихода данных: `loadMore` отказывался бы работать,
+   * а догон соседней вкладки крутил бы повторные попытки вхолостую.
+   */
+  const exhausted = computed(() => total.value > 0 && cards.value.length >= total.value);
 
   /**
    * Позиция прокрутки.

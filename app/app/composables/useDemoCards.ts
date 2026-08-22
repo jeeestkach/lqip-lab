@@ -38,7 +38,9 @@ export interface DemoParams {
 /** Читает параметры демонстрации из адреса страницы. */
 export function useDemoParams(): DemoParams {
   const route = useRoute();
-  return reactive({ ph: String(route.query.ph ?? '20') });
+  // Двенадцать по умолчанию: после blur(10px) на карточке в 223 px оно
+  // неотличимо от двадцати, а блок превью весит на 42 % меньше.
+  return reactive({ ph: String(route.query.ph ?? '12') });
 }
 
 /**

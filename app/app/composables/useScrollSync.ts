@@ -178,11 +178,6 @@ export function useScrollSync(opts: ScrollSyncOptions): ScrollSyncApi {
       heights[k] = r.height;
     }
     stale = false;
-    if (import.meta.dev) {
-      (window as unknown as Record<string, unknown>).__syncDbg = {
-        n: tops.length, top5: tops[5], h5: heights[5], sy, stale,
-      };
-    }
   }
 
   /**
@@ -376,15 +371,18 @@ export function useScrollSync(opts: ScrollSyncOptions): ScrollSyncApi {
     }
 
     stopChase();
-    if (import.meta.dev) {
-      (window as unknown as Record<string, unknown>).__syncApply = {
-        i: a.i, f: +a.f.toFixed(3), y: Math.round(y), n: tops.length, top: tops[a.i], h: heights[a.i],
-      };
-    }
     scrollToY(y);
   }
 
   // ────────────────────────────── канал ────────────────────────────────────
+
+  /**
+   * Последний собственный якорь ведущей вкладки.
+   *
+   * Нужен, чтобы пережить смену раскладки: пиксель после неё указывает
+   * на другую карточку, а якорь — на ту же самую.
+   */
+  let local: ScrollAnchor | null = null;
 
   /** Рассылает текущее положение. Отражения чужих применений отсеиваются здесь. */
   function publish(): void {
@@ -393,7 +391,21 @@ export function useScrollSync(opts: ScrollSyncOptions): ScrollSyncApi {
     if (appliedY !== null && Math.abs(y - appliedY) <= EPS) return;
     // Разошлось — значит, полосу двинул человек. Дальше рассылаем без оглядки.
     appliedY = null;
-    bc.postMessage({ t: 'state', from: id, a: readAnchor() } satisfies SyncMessage);
+    local = readAnchor();
+    bc.postMessage({ t: 'state', from: id, a: local } satisfies SyncMessage);
+  }
+
+  /**
+   * Рассылает положение безусловно, минуя отсев эха.
+   *
+   * Нужно там, где положение изменилось не от прокрутки, а от смены раскладки:
+   * обычная рассылка сочла бы это чужим применением и промолчала.
+   */
+  function announce(): void {
+    if (!bc || !driving.value) return;
+    appliedY = null;
+    local = readAnchor();
+    bc.postMessage({ t: 'state', from: id, a: local } satisfies SyncMessage);
   }
 
   let sendRaf = 0;
@@ -484,12 +496,6 @@ export function useScrollSync(opts: ScrollSyncOptions): ScrollSyncApi {
     // Ведёт тот, кто прислал. Мы — повторяем и до следующего касания молчим.
     driving.value = false;
     remote = m.a;
-    if (import.meta.dev) {
-      const w = window as unknown as Record<string, unknown>;
-      const log = (w.__syncMsgs ??= []) as unknown[];
-      log.push({ i: m.a.i, f: +m.a.f.toFixed(3), hidden: document.hidden });
-      if (log.length > 200) log.shift();
-    }
     schedule();
   }
 
@@ -533,16 +539,37 @@ export function useScrollSync(opts: ScrollSyncOptions): ScrollSyncApi {
   }
 
   function onVisibility(): void {
-    // Вернулись из фона: применяем последнее, что успело прийти, пока кадров
-    // не выдавали. Без этого вкладка осталась бы стоять там, где её свернули.
-    if (!document.hidden && remote) applyRemote();
+    if (document.hidden) return;
+    // Ведущая держит СВОЁ, ведомая догоняет чужое. Без проверки ведущая
+    // уезжала в позицию соседа, снятую ДО того, как руль перешёл к ней, —
+    // то есть в протухшую. Проверено в браузере: вкладка на y=0 прыгала
+    // на позицию соседа при простом возврате из фона.
+    if (driving.value) restoreLocal();
+    else if (remote) applyRemote();
   }
 
   function onResize(): void {
     stale = true;
-    // Ширина изменилась — число колонок и высоты другие. Своя позиция уехала,
-    // но якорь соседа по-прежнему верен: восстанавливаемся по нему.
-    if (remote) schedule();
+    // Ширина изменилась — колонок и высот стало другое количество, пиксель
+    // уехал. Но товар не уехал: у ведущей есть собственный якорь, у ведомой —
+    // якорь соседа. Каждая восстанавливается по своему.
+    if (driving.value) restoreLocal();
+    else if (remote) schedule();
+  }
+
+  /**
+   * Возвращает ведущую вкладку к её собственному товару после смены раскладки.
+   *
+   * Своей позиции в пикселях доверять нельзя — при другом числе колонок она
+   * указывает на другую карточку. Якорь запоминается при каждой рассылке.
+   */
+  function restoreLocal(): void {
+    if (!local) return;
+    const y = anchorToY(local);
+    if (y !== null) scrollToY(y);
+    // Раскладка изменилась — соседу надо сказать заново, иначе он останется
+    // стоять по старым координатам.
+    announce();
   }
 
   onMounted(() => {

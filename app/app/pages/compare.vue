@@ -20,7 +20,7 @@
 
 useHead({ title: 'Сравнение стратегий рендера' });
 
-const ph = useQueryParam('ph', '20');
+const ph = useQueryParam('ph', '12');
 
 /** Счётчик перезапусков: меняясь, он пересоздаёт оба iframe. */
 const runId = ref(0);
