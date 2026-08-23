@@ -1,7 +1,7 @@
 import { fileURLToPath } from 'node:url';
 import path from 'node:path';
-import { classMinifier } from './build/class-minifier';
-import { cls } from './build/class-map';
+import { classMinifier } from './buildtools/class-minifier';
+import { cls } from './buildtools/class-map';
 
 const rootDir = path.dirname(fileURLToPath(import.meta.url));
 
@@ -23,18 +23,65 @@ const rootDir = path.dirname(fileURLToPath(import.meta.url));
  * и фотографии останутся видимыми сразу — страница обязана работать, даже если
  * этот код не выполнился.
  *
+ * ── Почему проявляется не всё подряд ────────────────────────────────────────
+ * Повторный заход выглядит иначе: документ берётся из кеша, а снимки лежат
+ * там же — адреса содержат хеш содержимого и живут с пометкой «неизменно».
+ * В таком заходе размытие и проявление ВРЕДЯТ: показывать пятно вместо готовой
+ * фотографии и потом четверть секунды её проявлять — это придуманная задержка
+ * на ровном месте.
+ *
+ * Различаем по `complete` на первом кадре после разбора: снимок из кеша к тому
+ * времени готов, сетевой — нет. Проявляются только вторые. Смотрим именно
+ * на кадр, а не на момент загрузки: решать в обработчике `load` значило бы
+ * гасить уже нарисованную фотографию, а это мигание.
+ *
  * Имена классов берутся из общей карты сокращений: этот код живёт строкой
  * в конфиге, и плагин сборки до него не дотягивается — подставляем сами,
  * иначе селектор разошёлся бы с сокращёнными именами в разметке.
  */
 const REVEAL_WATCHER = `
-document.documentElement.classList.add('${cls('reveal')}');
-document.addEventListener('load', function (e) {
-  var t = e.target;
-  if (!t || t.tagName !== 'IMG') return;
-  var slot = t.parentElement;
-  if (slot && slot.classList.contains('${cls('pcard-media')}')) slot.classList.add('${cls('is-loaded')}');
-}, true);
+(function () {
+  var R = document.documentElement.classList;
+  R.add('${cls('reveal')}');
+  var MEDIA = '${cls('pcard-media')}', PENDING = '${cls('is-pending')}', LOADED = '${cls('is-loaded')}';
+
+  // Помечаем ждущими только те снимки, что на момент осмотра ещё не приехали.
+  // Уже готовые не трогаем вовсе: им проявляться не из чего и незачем.
+  function mark(scope) {
+    var list = scope.querySelectorAll('.' + MEDIA + ' img');
+    for (var i = 0; i < list.length; i++) {
+      var img = list[i];
+      if (!img.complete && img.parentElement) img.parentElement.classList.add(PENDING);
+    }
+  }
+
+  document.addEventListener('load', function (e) {
+    var t = e.target;
+    if (!t || t.tagName !== 'IMG') return;
+    var slot = t.parentElement;
+    if (slot && slot.classList.contains(PENDING)) slot.classList.add(LOADED);
+  }, true);
+
+  function start() {
+    // Кадр после разбора: к этому моменту снимки из кеша браузера уже готовы,
+    // а сетевые — ещё нет. Именно это различие нам и нужно.
+    requestAnimationFrame(function () { mark(document); });
+
+    // Догруженные порции приходят позже и всегда идут по сети — их помечаем
+    // при появлении, иначе они проступали бы рывком.
+    new MutationObserver(function (records) {
+      for (var i = 0; i < records.length; i++) {
+        var added = records[i].addedNodes;
+        for (var j = 0; j < added.length; j++) {
+          if (added[j].nodeType === 1) mark(added[j]);
+        }
+      }
+    }).observe(document.body, { childList: true, subtree: true });
+  }
+
+  if (document.readyState === 'loading') document.addEventListener('DOMContentLoaded', start);
+  else start();
+})();
 `.trim();
 
 /**

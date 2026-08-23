@@ -154,17 +154,21 @@ td.num { font-family: ui-monospace, Menlo, monospace; white-space: nowrap; }
  * документа, а `:global(html.reveal) …` внутри scoped Vue собирает неверно —
  * отбрасывает потомков и оставляет переход на самом `html`.
  *
- * Класс `reveal` ставит наблюдатель из head (см. nuxt.config.ts), класс
- * `is-loaded` — он же, когда фотография действительно пришла. Ни Vue, ни
- * обработчиков в разметке: фотография часто загружается раньше, чем выполнится
- * код фреймворка, и событие было бы упущено.
+ * Оба класса ставит наблюдатель из head (см. nuxt.config.ts), не Vue:
+ * фотография часто загружается раньше, чем выполнится код фреймворка,
+ * и событие было бы упущено.
  *
- * Порядок важен: без скрипта ни одно из правил не применится, фотографии
- * останутся видимыми сразу, и страница будет рабочей. Красота не должна
- * оборачиваться пустыми карточками, если скрипт не выполнился.
+ * Проявляются ТОЛЬКО снимки с меткой `is-pending` — те, что на первом кадре
+ * ещё не приехали. Взятый из кеша браузера к этому моменту готов, метки
+ * не получает и появляется сразу: без размытого пятна и без четверти секунды
+ * проявления, которых на повторном заходе никто не просил.
+ *
+ * Без скрипта ни одно правило не применится, фотографии останутся видимыми
+ * сразу, и страница будет рабочей. Красота не должна оборачиваться пустыми
+ * карточками, если скрипт не выполнился.
  */
-html.reveal .pcard-media.has-ph img { opacity: 0; }
-html.reveal .pcard-media.has-ph.is-loaded img {
+html.reveal .pcard-media.is-pending img { opacity: 0; }
+html.reveal .pcard-media.is-pending.is-loaded img {
   opacity: 1;
   transition: opacity .4s ease;
 }
@@ -172,6 +176,6 @@ html.reveal .pcard-media.has-ph.is-loaded img {
 /* Не загрузилась — остаётся размытое превью, а не значок битой картинки. */
 
 @media (prefers-reduced-motion: reduce) {
-  html.reveal .pcard-media.has-ph img { opacity: 1; }
-  html.reveal .pcard-media.has-ph.is-loaded img { transition: none; }
+  html.reveal .pcard-media.is-pending img { opacity: 1; }
+  html.reveal .pcard-media.is-pending.is-loaded img { transition: none; }
 }

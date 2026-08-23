@@ -49,6 +49,7 @@ const NAMES = [
   'dgrid',
   // состояния
   'is-embedded',
+  'is-pending',
   'is-loaded',
   'has-ph',
   'reveal',
