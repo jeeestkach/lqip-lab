@@ -1,0 +1,16 @@
+{
+  "name": "lqip-lab-video",
+  "private": true,
+  "version": "1.0.0",
+  "description": "Сравнительное видео двух стратегий рендера — собирается Remotion",
+  "scripts": {
+    "studio": "remotion studio",
+    "render": "remotion render Compare out/compare.mp4"
+  },
+  "dependencies": {
+    "@remotion/cli": "4.0.400",
+    "remotion": "4.0.400",
+    "react": "19.2.0",
+    "react-dom": "19.2.0"
+  }
+}

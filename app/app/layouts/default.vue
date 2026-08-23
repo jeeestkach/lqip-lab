@@ -16,6 +16,7 @@
       <NuxtLink to="/compare">Сравнение</NuxtLink>
       <NuxtLink to="/">Каталог</NuxtLink>
       <NuxtLink to="/upload">Загрузка</NuxtLink>
+      <NuxtLink to="/video">Как это выглядит</NuxtLink>
       <NuxtLink to="/why">Зачем это нужно</NuxtLink>
 
       <!--

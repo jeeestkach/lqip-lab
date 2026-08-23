@@ -1,0 +1,18 @@
+{
+  "csr": {
+    "document": 198,
+    "firstPaint": 328,
+    "cards": 120,
+    "images": 62,
+    "bytes": 1036765,
+    "url": "https://lqip.nikita-morozov.ru/demo/csr"
+  },
+  "ssr": {
+    "document": 24,
+    "firstPaint": 328,
+    "cards": 120,
+    "images": 102,
+    "bytes": 1632603,
+    "url": "https://lqip.nikita-morozov.ru/demo/ssr"
+  }
+}
