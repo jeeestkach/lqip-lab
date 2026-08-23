@@ -232,7 +232,12 @@ export default defineNitroPlugin(() => {
        * и всё это время витрина показывала бы вчерашний набор товаров. Здесь же
        * момент известен точно — вот он.
        */
-      if (added || filled || stale.length) invalidatePages();
+      if (added || filled || stale.length) {
+        invalidatePages();
+        // Версия набора растёт — значит прежние адреса каталога больше не те,
+        // и `immutable` на них не соврёт: сменился набор, сменился и адрес.
+        bumpCatalogVersion();
+      }
 
       console.log(`[seed] загружено: ${added}, дозаполнено: ${filled}, убрано устаревших: ${stale.length}`);
     } catch (err) {

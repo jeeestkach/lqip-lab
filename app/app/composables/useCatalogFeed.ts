@@ -23,6 +23,14 @@ export interface CatalogFeedOptions {
   pageSize: number;
   /** Смещение прокрутки, присланное родителем. Внутри iframe — единственный источник. */
   offset: Ref<number>;
+  /**
+   * Версия набора товаров, пришедшая с первой порцией.
+   *
+   * Подставляется в следующие запросы, и тогда сервер помечает ответ
+   * `immutable`: адрес с верной версией не протухает никогда, а сменится
+   * набор — сменится и адрес. Без неё ответ живёт минуту и переспрашивается.
+   */
+  version?: number;
 }
 
 /**
@@ -41,6 +49,8 @@ export function useCatalogFeed(opts: CatalogFeedOptions) {
   const cards = ref<DemoCard[]>([...opts.initial]);
   const total = ref(opts.total);
   const loading = ref(false);
+  /** Версия набора: приходит с данными и подставляется в следующие запросы. */
+  const version = ref(opts.version ?? 0);
 
   /**
    * Всё ли уже показано.
@@ -78,9 +88,18 @@ export function useCatalogFeed(opts: CatalogFeedOptions) {
     loading.value = true;
     try {
       const d = await $fetch<any>('/api/images', {
-        query: { ph: opts.ph, catalog: 1, offset: cards.value.length, limit: opts.pageSize },
+        query: {
+          ph: opts.ph,
+          catalog: 1,
+          offset: cards.value.length,
+          limit: opts.pageSize,
+          ...(version.value ? { v: version.value } : {}),
+        },
       });
       total.value = d?.total ?? total.value;
+      // Первый ответ приносит версию — дальше она едет в адресе, и ответы
+      // становятся вечными до следующего засева.
+      if (d?.version) version.value = d.version;
       /*
        * Пометка «догружена» нужна для проявления.
        *
@@ -120,5 +139,5 @@ export function useCatalogFeed(opts: CatalogFeedOptions) {
 
   watch(() => opts.offset.value, check);
 
-  return { cards, total, loading, exhausted, loadMore };
+  return { cards, total, loading, exhausted, loadMore, version };
 }

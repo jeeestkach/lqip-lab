@@ -47,6 +47,7 @@ const { data } = await useFetch('/api/images', {
     if (import.meta.server) placeholderCss = buildPlaceholderCss(built);
     return {
       total: d?.total ?? built.length,
+      version: d?.version ?? 0,
       // Превью уже уехали в блок стилей — в payload их незачем повторять.
       cards: built.map(({ placeholder, ...rest }) => rest),
     };
@@ -74,6 +75,7 @@ const { cards, total, loading, exhausted, loadMore } = useCatalogFeed({
   ph: params.ph,
   pageSize: PAGE_SIZE,
   offset,
+  version: data.value?.version ?? 0,
 });
 
 /*

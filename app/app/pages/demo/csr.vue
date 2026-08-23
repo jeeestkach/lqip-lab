@@ -35,7 +35,7 @@ const { data } = await useFetch('/api/images', {
   query: { ph: params.ph, catalog: 1, offset: 0, limit: PAGE_SIZE },
   server: false,
   lazy: true,
-  transform: (d: any) => ({ total: d?.total ?? 0, cards: buildCards(d?.images, 0) }),
+  transform: (d: any) => ({ total: d?.total ?? 0, version: d?.version ?? 0, cards: buildCards(d?.images, 0) }),
 });
 
 const { offset, embedded, markFirstImagery, markCardsVisible } = useDemoFrame({
@@ -76,6 +76,7 @@ watch(
     if (!import.meta.client || !d?.cards.length || cards.value.length) return;
     cards.value = d.cards;
     total.value = d.total;
+    version.value = d.version;
     // Вехи снимаются, когда карточки появились в разметке. Обёртка обязательна:
     // requestAnimationFrame передаёт колбэку метку времени, и она попала бы
     // в первый параметр как `atFirstPaint = true`.
