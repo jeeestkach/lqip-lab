@@ -81,7 +81,15 @@ export function useCatalogFeed(opts: CatalogFeedOptions) {
         query: { ph: opts.ph, catalog: 1, offset: cards.value.length, limit: opts.pageSize },
       });
       total.value = d?.total ?? total.value;
-      cards.value.push(...buildCards(d?.images, cards.value.length));
+      /*
+       * Пометка «догружена» нужна для проявления.
+       *
+       * Серверные карточки его не получают, и намеренно: их снимки часто
+       * приходят раньше, чем выполнится код фреймворка, и гасить уже
+       * нарисованное значило бы мигать. Догруженные же вставляем мы сами —
+       * про них точно известно, что снимка ещё нет.
+       */
+      cards.value.push(...buildCards(d?.images, cards.value.length).map((c) => ({ ...c, fresh: true })));
     } catch {
       // Сеть подвела — оставляем что есть; следующая прокрутка попробует снова.
     } finally {

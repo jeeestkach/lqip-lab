@@ -50,6 +50,7 @@ function isEager(index: number): boolean {
       :with-placeholder="withPlaceholder"
       :url="card.url"
       :eager="isEager(card.index)"
+      :fresh="card.fresh"
       :product="card.product"
     />
   </div>

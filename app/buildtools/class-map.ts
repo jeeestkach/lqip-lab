@@ -52,7 +52,6 @@ const NAMES = [
   'is-pending',
   'is-loaded',
   'has-ph',
-  'reveal',
 ] as const;
 
 /**

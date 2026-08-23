@@ -20,6 +20,8 @@ export interface DemoCard {
   phKey: string;
   /** Единственный адрес изображения: `srcset` карточке не нужен. */
   url: string;
+  /** Карточка вставлена скриптом — значит проявляется. */
+  fresh?: boolean;
   product?: {
     href: string;
     supplier: string;
