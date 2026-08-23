@@ -29,9 +29,28 @@ export default defineEventHandler(async (event) => {
 
   const storage = useObjectStorage();
 
+  /*
+   * Выбор формата по заголовку `accept`.
+   *
+   * Адрес у копии один и оканчивается на `.webp` — он же стоит в разметке.
+   * Браузер, понимающий AVIF, получает рядом лежащий `.avif`: он на четверть
+   * легче при той же или лучшей точности (замер — см. AVIF_QUALITY в конвейере).
+   * Остальные получают WebP по тому же адресу.
+   *
+   * Так разметка не растёт на `<picture>` с двумя источниками, а адрес остаётся
+   * один — значит и запись в кеше одна. Плата — заголовок `vary: accept`,
+   * без которого промежуточный кеш отдал бы AVIF тому, кто его не понимает.
+   */
+  let key = segments;
+  let negotiated = false;
+  if (segments.endsWith('.webp') && String(getRequestHeader(event, 'accept') ?? '').includes('image/avif')) {
+    const alt = `${segments.slice(0, -'.webp'.length)}.avif`;
+    if (await storage.exists(alt)) { key = alt; negotiated = true; }
+  }
+
   let body: Buffer;
   try {
-    body = await storage.get(segments);
+    body = await storage.get(key);
   } catch {
     throw createError({ statusCode: 404, statusMessage: 'объект не найден' });
   }
@@ -42,8 +61,11 @@ export default defineEventHandler(async (event) => {
     await new Promise((resolve) => setTimeout(resolve, Math.min(wait, 60_000)));
   }
 
-  const ext = segments.split('.').pop()?.toLowerCase() ?? '';
+  const ext = key.split('.').pop()?.toLowerCase() ?? '';
   setResponseHeader(event, 'content-type', TYPES[ext] ?? 'application/octet-stream');
+  // Один адрес — два возможных ответа. Без этого промежуточный кеш способен
+  // отдать AVIF браузеру, который его не понимает.
+  if (negotiated || segments.endsWith('.webp')) setResponseHeader(event, 'vary', 'accept');
 
   // Замедленный ответ кешировать НЕЛЬЗЯ: `?speed=` входит в ключ кеша, и после
   // первого запроса браузер отдавал бы «медленный» URL мгновенно из кеша —

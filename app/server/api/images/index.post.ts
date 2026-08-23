@@ -6,7 +6,11 @@
  *
  * Всё, что здесь происходит, происходит СИНХРОННО: по замерам полный конвейер
  * укладывается в сотни миллисекунд, и запись сразу пригодна к рендеру.
- * Разделение на очередь понадобится, когда добавится AVIF (≈2 с на копию).
+ *
+ * Каждая копия делается сразу в двух форматах — WebP и AVIF. Прежний комментарий
+ * здесь утверждал, что AVIF стоит около двух секунд на копию, и на этом основании
+ * его откладывали до появления очереди. Замер это опроверг: при усилии 2 выходит
+ * 14 мс, то есть очередь не нужна.
  */
 
 import { processImage, DEFAULT_SIZES, DEFAULT_PLACEHOLDER_WIDTH, CARD_WIDTH, toDataUri } from '../../utils/pipeline';
@@ -141,7 +145,11 @@ export default defineEventHandler(async (event) => {
     // останется мусор, но в БД не будет записи со ссылкой в никуда.
     await storage.put(processed.originalKey, file.data, processed.originalMime);
     await Promise.all(
-      processed.variants.map((v) => storage.put(v.key, v.body, 'image/webp')),
+      // Обе копии сразу: адрес один, а какую отдать — решит маршрут по `accept`.
+      processed.variants.flatMap((v) => [
+        storage.put(v.key, v.body, 'image/webp'),
+        storage.put(v.avifKey, v.avifBody, 'image/avif'),
+      ]),
     );
 
     const record = await repo.insert({
@@ -153,7 +161,7 @@ export default defineEventHandler(async (event) => {
       height: processed.height,
       placeholders: processed.placeholders,
       placeholderFormat: processed.placeholderFormat,
-      variants: processed.variants.map(({ body, ...v }) => v),
+      variants: processed.variants.map(({ body, avifBody, ...v }) => v),
       title: defaultTitle || (file.filename ?? 'Без названия').replace(/\.[^.]+$/, ''),
       timings: processed.timings,
     });

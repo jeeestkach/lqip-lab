@@ -1,9 +1,13 @@
 /**
  * Конвейер обработки изображения при загрузке.
  *
- * Порядок операций задан замерами (см. docs/ARCHITECTURE.md):
- *   плейсхолдер 20 px ≈ 10 мс, производная 1280 px WebP ≈ 231 мс, AVIF ≈ 2 с.
- * Поэтому плейсхолдер считается синхронно в запросе, а тяжёлые размеры — отдельно.
+ * Каждая видимая копия делается СРАЗУ В ДВУХ форматах: WebP и AVIF. Отдаётся
+ * та, что понимает браузер, — решает маршрут `/cdn/**` по заголовку `accept`.
+ * AVIF на четверть легче при той же точности, и это самая крупная экономия
+ * во всей странице: снимки — 89 % её веса, документ всего 2 %.
+ *
+ * Прежде здесь стояло, что AVIF стоит около двух секунд на копию, и на этом
+ * основании его откладывали. Замер опроверг: при усилии 2 выходит 14 мс.
  *
  * Ключевое правило качества: ВИДИМЫЕ размеры режутся из оригинала, чтобы не
  * накапливать поколенческие потери. Исключение ровно одно и оно осознанное —
@@ -45,6 +49,34 @@ const PLACEHOLDER_QUALITY = 40;
 /** Качество WebP для видимых размеров. */
 const VARIANT_QUALITY = 75;
 
+/**
+ * Качество AVIF для видимых размеров.
+ *
+ * Пятьдесят у AVIF — не то же самое, что пятьдесят у WebP: шкалы разные.
+ * Замер на двадцати наших снимках, ошибка в Oklab против оригинала:
+ *   webp q75 (было) — 20 628 B на снимок, ошибка 0,0094
+ *   avif q50        — 14 997 B на снимок, ошибка 0,0090
+ * То есть меньше на четверть и при этом ТОЧНЕЕ. Не компромисс, а строгое
+ * улучшение: другой кодек эффективнее на тех же данных.
+ */
+const AVIF_QUALITY = 50;
+
+/**
+ * Усилие кодировщика AVIF: от нуля до девяти, больше — дольше и плотнее.
+ *
+ * Двойка, а не четвёрка по умолчанию. Замер:
+ *   усилие 0 —  19 мс, 21 749 B   (почти как webp, смысла нет)
+ *   усилие 2 —  14 мс, 16 814 B   <- взято
+ *   усилие 4 —  88 мс, 16 774 B   (сорок байт выигрыша за вшестеро большее время)
+ *   усилие 6 — 254 мс, 16 280 B
+ * Конвейер работает синхронно при загрузке, поэтому лишние миллисекунды тут
+ * платит человек, который ждёт ответа.
+ *
+ * Старый комментарий в этом файле утверждал, что AVIF стоит около двух секунд
+ * на копию, и на этом основании его откладывали. Замер это опровергает.
+ */
+const AVIF_EFFORT = 2;
+
 /** Размеры по умолчанию, если клиент не передал свои. */
 export const DEFAULT_SIZES = [300, 640, 1280];
 
@@ -58,7 +90,33 @@ export const DEFAULT_SIZES = [300, 640, 1280];
  */
 export const CARD_WIDTH = 400;
 
-/** Одна готовая производная. */
+/**
+ * Кодирует один кадр в AVIF заданной ширины.
+ *
+ * Вынесено наружу, потому что нужно двум местам: обработке при загрузке
+ * и дозаполнению уже существующих записей при засеве.
+ *
+ * @param input Исходное изображение.
+ * @param width Ширина копии.
+ * @returns Содержимое файла AVIF.
+ */
+export function encodeAvif(input: Buffer, width: number): Promise<Buffer> {
+  return sharp(input)
+    .rotate()
+    .resize({ width, withoutEnlargement: true })
+    .avif({ quality: AVIF_QUALITY, effort: AVIF_EFFORT })
+    .toBuffer();
+}
+
+/**
+ * Одна готовая производная — в двух форматах сразу.
+ *
+ * Адрес у копии ОДИН, оканчивается на `.webp`, и в разметку уезжает именно он.
+ * Какой из двух форматов отдать, решает маршрут `/cdn/**` по заголовку `accept`:
+ * браузер, понимающий AVIF, получает его, остальные — WebP. Так разметка
+ * не растёт на `<picture>` с двумя источниками, а адрес остаётся один и тот же —
+ * значит и кеш один.
+ */
 export interface Variant {
   width: number;
   height: number;
@@ -68,6 +126,12 @@ export interface Variant {
   key: string;
   /** Содержимое — вызывающий код сам решает, когда его класть в хранилище. */
   body: Buffer;
+  /** Ключ той же копии в AVIF. */
+  avifKey: string;
+  /** Размер копии в AVIF, байт. */
+  avifBytes: number;
+  /** Содержимое копии в AVIF. */
+  avifBody: Buffer;
 }
 
 /** Результат обработки одного файла. */
@@ -145,19 +209,28 @@ export async function processImage(input: Buffer, sizes: number[] = DEFAULT_SIZE
   const variants = await clock('variants', async () =>
     Promise.all(
       targets.map(async (width): Promise<Variant> => {
-        const { data, info } = await sharp(input)
-          .rotate() // применяем EXIF-ориентацию к пикселям, пока метаданные ещё есть
+        // Поворот по EXIF применяем ОДИН раз и дальше кодируем из общего кадра:
+        // иначе два кодека читали бы и разворачивали оригинал каждый сам.
+        const upright = await sharp(input)
+          .rotate()
           .resize({ width, withoutEnlargement: true })
-          .webp({ quality: VARIANT_QUALITY })
-          .toBuffer({ resolveWithObject: true });
+          .toBuffer();
+
+        const [webp, avif] = await Promise.all([
+          sharp(upright).webp({ quality: VARIANT_QUALITY }).toBuffer({ resolveWithObject: true }),
+          sharp(upright).avif({ quality: AVIF_QUALITY, effort: AVIF_EFFORT }).toBuffer(),
+        ]);
 
         return {
-          width: info.width,
-          height: info.height,
+          width: webp.info.width,
+          height: webp.info.height,
           format: 'webp',
-          bytes: data.length,
-          key: `${hash}/${info.width}.webp`,
-          body: data,
+          bytes: webp.data.length,
+          key: `${hash}/${webp.info.width}.webp`,
+          body: webp.data,
+          avifKey: `${hash}/${webp.info.width}.avif`,
+          avifBytes: avif.length,
+          avifBody: avif,
         };
       }),
     ),
