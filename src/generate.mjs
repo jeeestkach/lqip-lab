@@ -24,7 +24,7 @@ const PRIMARY = 'main.webp';
 
 /**
  * Прогоняет одно изображение через все техники.
- * @param file Имя файла внутри input/.
+ * @param file Путь файла относительно input/ — может быть во вложенной папке.
  * @returns Полный набор метрик и артефактов для рендера.
  */
 async function analyse(file) {
@@ -42,7 +42,11 @@ async function analyse(file) {
   ]);
 
   return {
-    file,
+    /*
+     * В разметку уезжает ТОЛЬКО имя файла: рядом с ней, в dist/img/, лежит
+     * плоский набор без вложенных папок. Полный путь нужен лишь для чтения.
+     */
+    file: path.basename(file),
     width: meta.width,
     height: meta.height,
     format: meta.format,
@@ -57,22 +61,55 @@ async function analyse(file) {
   };
 }
 
+/** Сколько примеров показывать: сравниваются способы, а не товары. */
+const MAX_SAMPLES = 6;
+
+/**
+ * Собирает изображения из папки и всех вложенных.
+ * @param dir Корень поиска.
+ * @returns Пути относительно корня.
+ */
+async function collectImages(dir, prefix = '') {
+  const entries = await readdir(dir, { withFileTypes: true });
+  const out = [];
+  for (const e of entries) {
+    const rel = prefix ? path.join(prefix, e.name) : e.name;
+    if (e.isDirectory()) out.push(...(await collectImages(path.join(dir, e.name), rel)));
+    else if (/\.(jpe?g|png|webp|avif)$/i.test(e.name)) out.push(rel);
+  }
+  return out;
+}
+
 /** Собирает dist/: копирует исходники и пишет index.html. */
 async function main() {
   await mkdir(DIST_DIR, { recursive: true });
   await mkdir(path.join(DIST_DIR, 'img'), { recursive: true });
 
-  const files = (await readdir(INPUT_DIR))
-    .filter((f) => /\.(jpe?g|png|webp|avif)$/i.test(f))
-    .sort((a, b) => (a === PRIMARY ? -1 : b === PRIMARY ? 1 : a.localeCompare(b)));
+  /*
+   * Изображения ищем и во вложенных папках.
+   *
+   * Раньше брались только те, что лежат прямо в input/, и сборка сломалась,
+   * когда товарный каталог переехал в input/catalog/images/. Ошибка при этом
+   * гласила «input/ пуст», хотя там полторы сотни файлов, — потому и не сразу
+   * понятно, что случилось.
+   *
+   * Берём ограниченное число: исследование сравнивает СПОСОБЫ, и сотня рядов
+   * одного и того же ничего не добавляет, а страница пухнет.
+   */
+  const files = (await collectImages(INPUT_DIR))
+    .sort((a, b) => (path.basename(a) === PRIMARY ? -1 : path.basename(b) === PRIMARY ? 1 : a.localeCompare(b)))
+    .slice(0, MAX_SAMPLES);
 
-  if (files.length === 0) throw new Error('input/ пуст — положите туда хотя бы одно изображение');
+  if (files.length === 0) {
+    throw new Error(`не нашёл изображений в ${INPUT_DIR} и вложенных папках`);
+  }
 
   const results = [];
   for (const file of files) {
     process.stdout.write(`  считаю ${file} … `);
     const r = await analyse(file);
-    await copyFile(path.join(INPUT_DIR, file), path.join(DIST_DIR, 'img', file));
+    const dest = path.join(DIST_DIR, 'img', path.basename(file));
+    await copyFile(path.join(INPUT_DIR, file), dest);
     results.push(r);
     console.log(`${r.width}×${r.height}, оригинал ${(r.originalBytes / 1024).toFixed(1)} КБ`);
   }
